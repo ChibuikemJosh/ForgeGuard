@@ -1,6 +1,6 @@
 """Request and response contracts for the chat endpoint."""
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatRequest(BaseModel):
@@ -8,9 +8,9 @@ class ChatRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    custom_security_violation_details: str
-    project_folder: str
-    session_id: str
+    custom_security_violation_details: str = Field(min_length=1)
+    project_folder: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
 
 
 class ChatLocation(BaseModel):

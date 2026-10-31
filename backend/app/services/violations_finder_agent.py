@@ -23,13 +23,14 @@ from pydantic import SecretStr
 
 from app.schemas.chat import ChatLocation
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 SYSTEM_INSTRUCTIONS_PATH = Path(__file__).with_name(
     "system_instructions_validatoragent.md"
 )
-DEFAULT_MODEL = "Llama-4-Maverick-17B-128E-Instruct-FP8"
-DEFAULT_BASE_URL = "https://api.llama.com/compat/v1"
+DEFAULT_MODEL = "muse-spark-1.3"
+DEFAULT_BASE_URL = "https://api.meta.ai/v1"
 MAX_FILES = 50
 MAX_TOTAL_CHARS = 200_000
 SKIPPED_DIR_NAMES = {
@@ -164,7 +165,10 @@ class ViolationsFinderAgent:
 
         if api_key is not None:
             client = ChatOpenAI(
-                model=self._model, base_url=self._base_url, api_key=SecretStr(api_key)
+                model=self._model,
+                base_url=self._base_url,
+                api_key=SecretStr(api_key),
+                timeout=60.0,
             )
         else:
             client = None

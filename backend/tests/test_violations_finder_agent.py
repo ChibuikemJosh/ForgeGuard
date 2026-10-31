@@ -40,3 +40,4 @@ def test_parse_locations_rejects_non_json() -> None:
 def test_parse_locations_rejects_bad_entries() -> None:
     with pytest.raises(AgentResponseError):
         _parse_locations('[{"filename": "a.py"}]')
+

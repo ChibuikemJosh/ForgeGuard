@@ -133,6 +133,53 @@ def test_evidence_validator_inconsistent_excerpt(tmp_path):
     assert "excerpt" in (validated.validation_error or "")
 
 
+def test_evidence_validator_rejects_mismatched_source_reference(tmp_path):
+    from app.schemas.security_investigation import EvidenceItem, EvidenceType
+    from app.services.evidence_validation import EvidenceValidator
+
+    service, ref = _workspace(tmp_path, {"m.py": "def foo():\n    pass\n"})
+    index, graph = _index_graph(service, ref)
+    validator = EvidenceValidator(service, ref.project_id, index, graph)
+    item = EvidenceItem(
+        evidence_id="e1",
+        evidence_type=EvidenceType.SOURCE_EXCERPT,
+        description="test",
+        file_path="m.py",
+        source={
+            "project_id": ref.project_id,
+            "file_path": "other.py",
+            "symbol": "m.py",
+            "line_start": 1,
+            "line_end": 1,
+        },
+        excerpt="def foo():",
+    )
+
+    validated = validator.validate(item)
+
+    assert validated.status.value == "invalid"
+    assert "file path" in (validated.validation_error or "")
+
+
+def test_investigation_maps_class_locations_to_graph_nodes(tmp_path):
+    service, ref = _workspace(
+        tmp_path,
+        {"m.py": "class Handler:\n    pass\n"},
+    )
+    index, graph = _index_graph(service, ref)
+    rule = SecurityRule(rule_id="r", title="R", invariant="I")
+    investigator = SecurityInvestigationService(
+        service,
+        agent=FakeAgent([ChatLocation(filename="m.py", linenumber=1)]),
+    )
+
+    result = investigator.investigate(ref, index, graph, rule)
+
+    class_id = index.classes[0].id
+    assert result.findings[0].affected_symbols == [class_id]
+    assert result.findings[0].related_graph_nodes == [class_id]
+
+
 def test_investigate_endpoint(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 

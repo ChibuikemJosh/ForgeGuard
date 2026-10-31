@@ -52,6 +52,7 @@ class EvidenceItem(BaseModel):
     symbol_id: str | None = None
     file_hash: str | None = None
     observed: bool = False
+    related_graph_nodes: list[str] = Field(default_factory=list)
     status: EvidenceStatus = EvidenceStatus.VALID
     validation_error: str | None = None
 

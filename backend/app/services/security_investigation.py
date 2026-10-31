@@ -81,6 +81,7 @@ class SecurityInvestigationService:
                 errors=[f"Investigation failed: {error}"],
             )
 
+        locations = locations or []
         validator = EvidenceValidator(self.workspace, project.project_id, index, graph)
         evidence_items = []
         affected_files = []
@@ -118,7 +119,7 @@ class SecurityInvestigationService:
                 InvestigationFinding(
                     finding_id=f"finding-{uuid.uuid4().hex[:8]}",
                     rule_id=rule.rule_id,
-                    title=f"Potential violation of {rule.title}",
+                    title=f"Potential violation of {rule.title or getattr(rule, 'name', None) or rule.rule_id}",
                     description=(
                         "The Violations Finder Agent identified source locations that may "
                         "violate the supplied security rule."
@@ -156,17 +157,24 @@ class SecurityInvestigationService:
         )
 
     def _rule_text(self, rule, index=None, graph=None):
-        parts = [rule.title, rule.invariant]
+        title = rule.title or getattr(rule, "name", None) or rule.rule_id
+        parts = [title]
+        if rule.invariant:
+            parts.append(rule.invariant)
         if rule.description:
             parts.append(rule.description)
         if rule.expected_property:
             parts.append(f"Expected property: {rule.expected_property}")
         if rule.guidance:
             parts.append(f"Guidance: {rule.guidance}")
+        if rule.category:
+            parts.append(f"Category: {rule.category}")
         if rule.concepts:
             parts.append(f"Relevant concepts: {', '.join(rule.concepts)}")
         if rule.indicators:
             parts.append(f"Indicators to examine: {', '.join(rule.indicators)}")
+        if rule.examples:
+            parts.append("Examples: " + "; ".join(rule.examples))
         if graph is not None:
             parts.append(
                 "Backend SourceGraph context (structural observations only; "
@@ -194,6 +202,9 @@ class SecurityInvestigationService:
         from app.schemas.chat import ChatLocation
 
         if not isinstance(location, ChatLocation):
+            if isinstance(location, dict):
+                line = location.get("linenumber", location.get("line_number", location.get("line number")))
+                location = {"filename": location.get("filename"), "linenumber": line}
             location = ChatLocation.model_validate(location)
         relative_path = location.filename
         project_root = self.workspace.project_root(project.project_id)

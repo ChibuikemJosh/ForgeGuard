@@ -172,9 +172,12 @@ class ViolationsFinderAgent:
         system_prompt = self._system_prompt()
 
         def analyze(state: AgentState) -> dict[str, Any]:
-            response = client.invoke(
-                [SystemMessage(content=system_prompt)] + state["messages"]
-            ) if client is not None else None
+            try:
+                response = client.invoke(
+                    [SystemMessage(content=system_prompt)] + state["messages"]
+                ) if client is not None else None
+            except Exception as error:
+                raise AgentResponseError(f"Model invocation failed: {error}") from error
             content = response.content if response else None
             if content:
                 text = content if isinstance(content, str) else json.dumps(content)

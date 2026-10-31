@@ -70,7 +70,8 @@ class EvidenceValidator:
             if node_source is not None and node_source.file_path != item.file_path:
                 return self._invalid(item, "Evidence graph node does not belong to the evidence file.")
         current_hash = self.file_hashes.get(item.file_path)
-        if item.file_hash is not None and current_hash is not None and item.file_hash != current_hash:
+        candidate_hash = item.file_hash or item.source.file_hash
+        if candidate_hash is not None and current_hash is not None and candidate_hash != current_hash:
             updated = item.model_copy(update={"status": EvidenceStatus.STALE})
             updated.validation_error = "Evidence file hash is stale."
             return updated

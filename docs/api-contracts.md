@@ -222,6 +222,75 @@ Requires `x-customer-id` header.
 
 ---
 
+
+## Security investigation
+
+### POST /api/workspace/projects/{project_id}/investigate — Implemented
+
+Investigates a registered project against a user-provided security rule.
+
+Request body (`InvestigateRequest`):
+
+```json
+{
+  "rule": {
+    "rule_id": "order-ownership-authorization",
+    "title": "Authenticated customers may access only their own orders",
+    "invariant": "The authenticated customer ID must be compared with the retrieved order owner before the order is returned."
+  }
+}
+```
+
+Response `200`: `InvestigationResult`
+
+```json
+{
+  "investigation_id": "investigation-abc123",
+  "project_id": "project-abc123",
+  "rule_id": "order-ownership-authorization",
+  "status": "completed",
+  "findings": [
+    {
+      "finding_id": "finding-abc123",
+      "rule_id": "order-ownership-authorization",
+      "title": "Potential violation of Authenticated customers may access only their own orders",
+      "description": "The Violations Finder Agent identified source locations that may violate the supplied security rule.",
+      "severity": "high",
+      "confidence": 0.5,
+      "status": "potential",
+      "affected_files": ["routes/orders.py"],
+      "affected_symbols": ["project-abc123:routes/orders.py:get_order"],
+      "related_graph_nodes": ["project-abc123:routes/orders.py:get_order"],
+      "evidence": [
+        {
+          "evidence_id": "evidence-routes/orders.py:12",
+          "evidence_type": "source_excerpt",
+          "description": "Agent-proposed source location validated by the backend.",
+          "file_path": "routes/orders.py",
+          "source": { "project_id": "project-abc123", "file_path": "routes/orders.py", "module": "routes.orders", "symbol": "project-abc123:routes/orders.py:get_order", "line_start": 12, "line_end": 12, "file_hash": "..." },
+          "excerpt": "return order",
+          "symbol_id": "project-abc123:routes/orders.py:get_order",
+          "file_hash": "...",
+          "observed": false,
+          "status": "valid",
+          "validation_error": null
+        }
+      ],
+      "reasoning": "The agent returned 1 location(s); 1 passed backend evidence validation.",
+      "recommended_remediation": "Review the identified code paths and enforce the security rule.",
+      "verification_status": "not_run"
+    }
+  ],
+  "errors": [],
+  "summary": "Investigated 1 files; agent returned 1 location(s), 1 validated."
+}
+```
+
+Workflow: registers nothing; indexes the project, builds its SourceGraph, invokes Ram's Violations Finder Agent with the rule and project folder, then validates every returned location against file existence, containment, line range, excerpt consistency, symbol identity, and file-hash freshness. Invalid locations are reported in `errors` and do not become validated evidence.
+
+Integration note: AI-generated findings are returned as `potential` unless all evidence is valid and directly observed. The backend does not treat the agent's assertion as a confirmed vulnerability.
+
+
 ## Status values
 
 - `AnalysisStatus`: `completed`, `failed`

@@ -66,14 +66,14 @@ Implemented today:
 - Evidence-backed findings and an evidence-derived semantic graph.
 - Review-only fix proposals.
 - Human approval, application, verification, and rollback for the controlled file.
+- General project investigation endpoint `POST /api/workspace/projects/{project_id}/investigate`.
+- Structured `SecurityRule`, `InvestigationFinding`, `EvidenceItem`, and `InvestigationResult` models.
+- Evidence validation against file existence, containment, line range, excerpt consistency, symbol identity, and file-hash freshness.
+- Integration with Ram's Violations Finder Agent through its `find_violations` interface. The agent receives the rule text and project folder and returns source locations. The backend validates those locations and returns findings as `potential` unless evidence is validated.
 
-Planned for Phase 3:
+The backend does not treat AI-generated locations as confirmed vulnerabilities. Missing or invalid evidence yields `inconclusive` or `unsupported` findings.
 
-- General security investigation over SourceGraph and project indexes.
-- Agent-assisted rule interpretation with evidence gating.
-- Confirmed findings only after source evidence and verification.
-
-The planned AI workflow is not implemented yet.
+Ram's agent is a LangGraph/LangChain wrapper around a Meta Model compatible API. It is not a second orchestrator in this backend; the backend calls it as an investigation component.
 
 ## Agent integration
 

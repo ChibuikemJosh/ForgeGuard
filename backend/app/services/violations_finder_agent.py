@@ -183,8 +183,8 @@ class ViolationsFinderAgent:
             
             locations = _parse_locations(text) if text else None
             return {
-                "messages": [response] if response else None,
-                "locations": [location.model_dump() for location in locations] if locations else None,
+                "messages": [response] if response else [],
+                "locations": [location.model_dump() for location in locations] if locations else [],
             }
 
         graph = StateGraph(AgentState)
@@ -231,4 +231,7 @@ class ViolationsFinderAgent:
             },
             config={"configurable": {"thread_id": session_id}},
         )
-        return [ChatLocation.model_validate(item) for item in result["locations"]]
+        return [
+            ChatLocation.model_validate(item)
+            for item in (result.get("locations") or [])
+        ]

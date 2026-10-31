@@ -20,8 +20,30 @@ class EvidenceValidator:
         }
         self.symbol_ids = {f.id for f in index.functions} | {c.id for c in index.classes}
         self.graph_node_ids = {node.id for node in graph.nodes}
+        self.graph_sources = {
+            node.id: node.source
+            for node in graph.nodes
+            if node.source is not None
+        }
 
     def validate(self, item):
+        if item.file_path != item.source.file_path:
+            return self._invalid(item, "Evidence file path does not match its source reference.")
+        if item.source.project_id not in (None, self.project_id):
+            return self._invalid(item, "Evidence source belongs to a different project.")
+        if item.symbol_id is not None:
+            if item.symbol_id not in self.symbol_ids:
+                return self._invalid(item, "Evidence symbol does not exist in the index.")
+            symbol = next(
+                (
+                    candidate
+                    for candidate in (*self.index.functions, *self.index.classes)
+                    if candidate.id == item.symbol_id
+                ),
+                None,
+            )
+            if symbol is None or symbol.source.file_path != item.file_path:
+                return self._invalid(item, "Evidence symbol does not belong to the evidence file.")
         try:
             content = self.workspace.read_file(self.project_id, item.file_path)
         except Exception as error:
@@ -41,8 +63,12 @@ class EvidenceValidator:
             )
             if item.excerpt.strip() != actual.strip():
                 return self._invalid(item, "Evidence excerpt does not match source.")
-        if item.symbol_id is not None and item.symbol_id not in self.symbol_ids:
-            return self._invalid(item, "Evidence symbol does not exist in the index.")
+        for node_id in item.related_graph_nodes:
+            if node_id not in self.graph_node_ids:
+                return self._invalid(item, "Evidence references an unknown graph node.")
+            node_source = self.graph_sources.get(node_id)
+            if node_source is not None and node_source.file_path != item.file_path:
+                return self._invalid(item, "Evidence graph node does not belong to the evidence file.")
         current_hash = self.file_hashes.get(item.file_path)
         if item.file_hash is not None and current_hash is not None and item.file_hash != current_hash:
             updated = item.model_copy(update={"status": EvidenceStatus.STALE})

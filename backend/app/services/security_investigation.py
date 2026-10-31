@@ -42,7 +42,7 @@ class SecurityInvestigationService:
         project_folder = str(self.workspace.project_root(project.project_id))
         try:
             locations = agent.find_violations(
-                self._rule_text(rule),
+                self._rule_text(rule, index, graph),
                 project_folder,
                 investigation_id,
             )
@@ -155,7 +155,7 @@ class SecurityInvestigationService:
             ),
         )
 
-    def _rule_text(self, rule):
+    def _rule_text(self, rule, index=None, graph=None):
         parts = [rule.title, rule.invariant]
         if rule.description:
             parts.append(rule.description)
@@ -163,6 +163,31 @@ class SecurityInvestigationService:
             parts.append(f"Expected property: {rule.expected_property}")
         if rule.guidance:
             parts.append(f"Guidance: {rule.guidance}")
+        if rule.concepts:
+            parts.append(f"Relevant concepts: {', '.join(rule.concepts)}")
+        if rule.indicators:
+            parts.append(f"Indicators to examine: {', '.join(rule.indicators)}")
+        if graph is not None:
+            parts.append(
+                "Backend SourceGraph context (structural observations only; "
+                "do not treat these as semantic proof):"
+            )
+            for node in graph.nodes:
+                if node.file_path is not None:
+                    parts.append(
+                        f"- node={node.id} type={node.type} "
+                        f"file={node.file_path} symbol={node.name}"
+                    )
+            for edge in graph.edges:
+                parts.append(
+                    f"- edge={edge.type} source={edge.source} "
+                    f"target={edge.target or '<unresolved>'} status={edge.status.value}"
+                )
+        if index is not None and index.errors:
+            parts.append(
+                "Indexing limitations: "
+                + "; ".join(f"{error.file_path}: {error.message}" for error in index.errors)
+            )
         return "\n".join(part for part in parts if part)
 
     def _validate_location(self, project, index, graph, validator, location):
@@ -213,6 +238,7 @@ class SecurityInvestigationService:
             item.related_graph_nodes = (
                 [symbol_id] if symbol_id in validator.graph_node_ids else []
             )
+            item = validator.validate(item)
         else:
             item.related_graph_nodes = []
         return item
@@ -220,12 +246,12 @@ class SecurityInvestigationService:
     @staticmethod
     def _symbol_for_line(index, file_path, line_number):
         candidates = [
-            function
-            for function in index.functions
-            if function.source.file_path == file_path
-            and function.source.line_start is not None
-            and function.source.line_end is not None
-            and function.source.line_start <= line_number <= function.source.line_end
+            symbol
+            for symbol in (*index.functions, *index.classes)
+            if symbol.source.file_path == file_path
+            and symbol.source.line_start is not None
+            and symbol.source.line_end is not None
+            and symbol.source.line_start <= line_number <= symbol.source.line_end
         ]
         if not candidates:
             return None

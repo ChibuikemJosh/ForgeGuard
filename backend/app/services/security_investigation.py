@@ -16,22 +16,29 @@ from app.schemas.security_investigation import (
 from app.schemas.source_graph import SourceGraph
 from app.services.evidence_validation import EvidenceValidator
 from app.services.project_workspace import ProjectReference, WorkspaceService
-from app.services.violations_finder_agent import (
-    AgentConfigurationError,
-    AgentResponseError,
-    ProjectFolderError,
-    ViolationsFinderAgent,
-)
+# Ram's agent is imported lazily so this module can be imported without the
+# optional LangChain dependency unless an investigation actually runs.
 
 
 class SecurityInvestigationService:
     def __init__(self, workspace, agent=None):
         self.workspace = workspace
-        self.agent = agent or ViolationsFinderAgent()
+        self.agent = agent
 
     def investigate(self, project, index, graph, rule, agent=None, session_id=None):
-        agent = agent or self.agent
+        if agent is None:
+            if self.agent is None:
+                from app.services.violations_finder_agent import ViolationsFinderAgent
+
+                self.agent = ViolationsFinderAgent()
+            agent = self.agent
         investigation_id = session_id or f"investigation-{uuid.uuid4().hex[:12]}"
+        from app.services.violations_finder_agent import (
+            AgentConfigurationError,
+            AgentResponseError,
+            ProjectFolderError,
+        )
+
         project_folder = str(self.workspace.project_root(project.project_id))
         try:
             locations = agent.find_violations(
@@ -79,10 +86,12 @@ class SecurityInvestigationService:
         affected_files = []
         affected_symbols = []
         related_nodes = []
+        errors = []
         for location in locations:
             try:
                 item = self._validate_location(project, index, graph, validator, location)
             except Exception as error:
+                errors.append(f"Invalid agent location: {error}")
                 continue
             evidence_items.append(item)
             if item.status.value == "valid":
@@ -131,7 +140,6 @@ class SecurityInvestigationService:
                 )
             )
 
-        errors = []
         if evidence_items and not valid_items:
             errors.append("Agent-proposed locations did not pass evidence validation.")
         return InvestigationResult(

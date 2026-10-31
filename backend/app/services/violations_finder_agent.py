@@ -19,6 +19,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, MessagesState, StateGraph
+from pydantic import SecretStr
 
 from app.schemas.chat import ChatLocation
 
@@ -160,21 +161,30 @@ class ViolationsFinderAgent:
         return f"{instructions}\n\n{RESPONSE_FORMAT}"
 
     def _build_graph(self, api_key: str):
-        client = ChatOpenAI(
-            model=self._model, base_url=self._base_url, api_key=api_key
-        )
+
+        if api_key is not None:
+            client = ChatOpenAI(
+                model=self._model, base_url=self._base_url, api_key=SecretStr(api_key)
+            )
+        else:
+            client = None
+        
         system_prompt = self._system_prompt()
 
         def analyze(state: AgentState) -> dict[str, Any]:
             response = client.invoke(
                 [SystemMessage(content=system_prompt)] + state["messages"]
-            )
-            content = response.content
-            text = content if isinstance(content, str) else json.dumps(content)
-            locations = _parse_locations(text)
+            ) if client is not None else None
+            content = response.content if response else None
+            if content:
+                text = content if isinstance(content, str) else json.dumps(content)
+            else:
+                text = None
+            
+            locations = _parse_locations(text) if text else None
             return {
-                "messages": [response],
-                "locations": [location.model_dump() for location in locations],
+                "messages": [response] if response else None,
+                "locations": [location.model_dump() for location in locations] if locations else None,
             }
 
         graph = StateGraph(AgentState)
@@ -215,7 +225,10 @@ class ViolationsFinderAgent:
         for filename, content in files:
             parts.append(f"\n--- File: {filename} ---\n{content}")
         result = self._graph.invoke(
-            {"messages": [HumanMessage(content="\n".join(parts))]},
+            {
+                "messages": [HumanMessage(content="\n".join(parts))],
+                "locations": [],
+            },
             config={"configurable": {"thread_id": session_id}},
         )
         return [ChatLocation.model_validate(item) for item in result["locations"]]

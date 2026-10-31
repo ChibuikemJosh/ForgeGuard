@@ -90,8 +90,8 @@ class SecurityRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rule_id: str
-    title: str
-    invariant: str
+    title: str | None = None
+    invariant: str | None = None
     name: str | None = None
     description: str | None = None
     category: str | None = None

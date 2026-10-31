@@ -70,6 +70,7 @@ Implemented today:
 - Structured `SecurityRule`, `InvestigationFinding`, `EvidenceItem`, and `InvestigationResult` models.
 - Evidence validation against file existence, containment, line range, excerpt consistency, symbol identity, and file-hash freshness.
 - Integration with Ram's Violations Finder Agent through its `find_violations` interface. The agent receives the rule text and project folder and returns source locations. The backend validates those locations and returns findings as `potential` unless evidence is validated.
+- Investigation prompts also include bounded structural SourceGraph observations and indexing limitations. These observations guide the model but are explicitly not treated as semantic proof.
 
 The backend does not treat AI-generated locations as confirmed vulnerabilities. Missing or invalid evidence yields `inconclusive` or `unsupported` findings.
 

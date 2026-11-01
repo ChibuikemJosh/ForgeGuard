@@ -312,3 +312,37 @@ Investigation results may report `truncated: true` when the Meta Muse context om
 | Agent orchestration / review loop | Ram | Consumes `SecurityAnalysisResponse`, `FixProposal`, `SourceGraph`; backend provides structured data and controlled operations |
 | Meta model tool | Bisal | Receives a `SecurityFinding`; returns structured explanation or fix proposal |
 | React graph visualiser | Kenny | Renders `SecurityGraph` from `/api/security/analyze` and `SourceGraph` from `/api/workspace/projects/{project_id}/source-graph` |
+
+---
+
+## Project Investigation (added)
+
+### GET /api/workspace/samples
+Returns `[{path, name, description}]` for bundled sample projects present under the workspace root.
+
+### POST /api/workspace/projects/upload
+Body: raw `.zip` bytes (`Content-Type: application/zip`, filename in `x-file-name`). Extracts safely inside the workspace root (no `..`/absolute paths, sensitive files skipped, 10 MB limit), unwraps a single top folder, registers and returns `ProjectReference`. Project code is never executed. Errors: `400` invalid/oversized zip.
+
+### GET /api/workspace/projects/{project_id}/files/content?path=<relative>
+Returns `{project_id, path, content, sha256, language}` via the workspace service containment checks. Errors: `404` unknown project/file, `400` invalid path or sensitive file.
+
+### GET /api/security/rules  (also GET /api/workspace/rules)
+Returns preset `SecurityRule[]`: `order-ownership-authorization`, `admin-role-authorization`, `invoice-ownership-authorization`.
+
+### POST /api/workspace/projects/{project_id}/investigate
+Existing contract (`InvestigationResult`). Truncation of the model file listing is reported in `errors`. The last result per project is stored in memory for fix proposals.
+
+### POST /api/workspace/projects/{project_id}/findings/{finding_id}/fix-proposals
+Body `{instructions?: string}`. Muse returns `{file_path, proposed_content, explanation}` (full corrected file); backend validates file match, `ast.parse`, and change. Returns `ProjectFixProposal` (`review_status=pending`, never auto-applied). Errors: `503` AI not configured, `502` bad AI response, `404` unknown project/finding.
+
+### GET /api/workspace/fix-proposals/{proposal_id}
+### POST /api/workspace/fix-proposals/{proposal_id}/review
+Body `{decision: approved|rejected, reviewer, actor: "human", reason?}`. Non-human actor -> `409`; non-pending -> `409`.
+
+### POST /api/workspace/fix-proposals/{proposal_id}/apply
+Requires approved; sha256 must match `expected_source_hash` (`409` otherwise). Atomic write inside the project root only.
+
+### POST /api/workspace/fix-proposals/{proposal_id}/rollback
+Restores the original only if the current hash equals the applied hash (`409` otherwise).
+
+CORS origins: `FORGE_CORS_ORIGINS` (comma-separated), defaulting to the two local Vite origins.

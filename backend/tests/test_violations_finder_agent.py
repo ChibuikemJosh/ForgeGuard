@@ -41,3 +41,16 @@ def test_parse_locations_rejects_bad_entries() -> None:
     with pytest.raises(AgentResponseError):
         _parse_locations('[{"filename": "a.py"}]')
 
+
+def test_extract_text_from_string_and_blocks():
+    from app.services.violations_finder_agent import _extract_text
+
+    assert _extract_text("hello") == "hello"
+    assert _extract_text([{"type": "text", "text": '{"violations": []}'}, {"type": "reasoning", "text": "skip"}]) == '{"violations": []}'
+    # reasoning-only blocks are ignored (type != text); text blocks join
+    assert _extract_text([{"type": "text", "text": "a"}, "b"]) == "ab"
+
+
+def test_parse_locations_accepts_structured_wrapper():
+    locations = _parse_locations('{"violations": [{"filename": "x.py", "linenumber": 2}]}')
+    assert [(loc.filename, loc.linenumber) for loc in locations] == [("x.py", 2)]

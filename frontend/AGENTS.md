@@ -151,62 +151,83 @@ src/
 - Grow the schema only when a feature consumes it; keep frontend and
   backend models aligned with the backend as source of truth.
 
-## Workspace page (`/workspace`) — graphical interface specs
+## Workspace page (`/workspace`) — single real-data workspace
 
-VS Code-style IDE around the project graph. The workspace has two modes,
-toggled in `TitleBar` (**Security flow** default, Overview secondary):
-
-- **Security flow** — backed by the real `/api/security/*` and `/api/demo/*`
-  endpoints via `services/api/client.ts` → `hooks/useSecurityWorkflow.ts` →
-  props. No component calls `fetch` directly.
-- **Overview** — the existing layer/file overview with its mock `data.ts`
-  (`GraphCanvas`, `FileExplorer`, `InspectorPanel`, `BottomPanel`). Mock
-  data only in this mode.
-
-### Security flow files
+One workspace, no mode toggle. Everything is the Project workflow's real
+data (backend SourceGraph, manifest, Muse investigation); there is no
+mock `components/workspace/data.ts` and no security-demo mode in the
+frontend (the backend `/api/security/*` and `/api/demo/*` endpoints still
+exist, the frontend just no longer calls them).
 
 ```
-src/features/security/
-├── types.ts              # Mirrors backend/app/schemas/security.py exactly
-├── layout.ts             # @dagrejs/dagre TB auto-layout (backend sends no positions)
-├── applyUnifiedDiff.ts   # Tiny unified-diff hunk applier for the After view
-├── sourceOutline.ts      # Symbol outline derived by scanning the snapshot
-└── demoSource.ts         # `?raw` build-time import of backend/app/security_demo.py + SHA-256
-src/hooks/useSecurityWorkflow.ts  # useReducer machine: idle → exploited → analyzing →
-                                  # confirmed → reviewing → approved → applying → applied →
-                                  # reanalyzing → fixed_in_source | resolved (+ error).
-                                  # `resolved` only when backend outcome === "satisfied".
-src/components/workspace/security/
-├── SecurityStepper.tsx   # Exploit·Scan·Understand·Review·Apply·Prove, layoutId pill
-├── SecurityExplorer.tsx  # Real scanned file + symbol outline (no backend call)
-├── SecurityFlowCanvas.tsx# React Flow canvas (Controls/MiniMap/dotted Background)
-├── SecurityNode.tsx      # memo node, typed NodeProps, finding pulse (reduced-motion off)
-├── AttackEdge.tsx        # Bezier edge + SVG animateMotion attack particle
-├── CodeViewer.tsx        # Read-only viewer: hash check, highlight, Before/After
-├── ShikiLines.tsx        # Lazy Shiki (shiki/core + JS engine + Python + github-dark)
-├── DiffViewer.tsx        # Unified diff with −/+ gutters
-├── DiffCompare.tsx       # Modal: side-by-side original vs proposed fix + unified diff
-├── SecurityInspector.tsx # Right panel = current step (rule card pinned, outcome badge)
-└── SecurityBottomPanel.tsx # Exploit | Verification | Output (API call log)
+src/hooks/useProjectWorkflow.ts   # useReducer machine; opening a project
+                                  # (sample, folder or .zip upload) auto-fetches
+                                  # manifest then SourceGraph — no Analyze click
+src/features/project/
+├── types.ts                      # Project/manifest/SourceGraph/investigation types (+ ApiLogEntry)
+├── tree.ts                       # Explorer tree from manifest paths; folderColor()
+├── graphLevels.ts                # Deterministic grouping + dagre positions
+└── graphScene.ts                 # Builds the 3-level React Flow scene
+src/components/workspace/
+├── TitleBar.tsx                  # FORGE (home), real project name, Change project, panel toggles
+├── StatusBar.tsx                 # Real values only: backend, project, file, investigation, review/apply
+├── WorkflowStepper.tsx           # Generic stepper (steps prop, layoutId ember pill)
+├── AiLoading.tsx                 # AiLoading (graph parsing) + AiInlinePulse (Muse calls)
+├── ResizeHandle.tsx              # Panel sashes (shared)
+├── shared/                       # DiffViewer, DiffCompare, ShikiLines, PlainLines
+└── project/
+    ├── ProjectPicker.tsx         # Sample button + "Upload project folder" + "Upload .zip project"
+    ├── ProjectExplorer.tsx       # Overview-style tree (react-icons, badges) from the manifest
+    ├── ExplorerTree.tsx          # TreeRow + FileIcon
+    ├── SourceGraphCanvas.tsx     # 3-level drill-down canvas (see below)
+    ├── GraphCardNode.tsx         # memo card node: eyebrow/name/desc/meta, ember select, finding badge
+    ├── ProjectCodeViewer.tsx     # Shiki viewer, opens at finding/node line
+    ├── RulePanel.tsx             # Rule presets + custom; "Run AI investigation"
+    ├── FindingsPanel.tsx         # Findings, backend status word-for-word ("potential")
+    └── FixPanel.tsx              # Generate → approve/reject → apply → rollback → re-run
 ```
 
-Truthfulness rules: outcome badge shows the backend value verbatim
-(`inconclusive` after apply gets helper text, never relabelled `satisfied`);
-apply verification is labelled "Reference verification"; proposal state is
-resumed via `GET /api/security/proposals/{id}` on analyze (keep the last
-`proposal_id` — post-fix analyses return `fix_proposal: null`); 404 on
-apply/rollback shows the backend-restarted message; replay animation outcome
-is driven by the real HTTP status, never the step number. Exactly one ember
-primary button is visible at a time.
+### Graph: 3 deterministic levels (no invented data)
 
-The scanned file is loaded at build time
-(`import demoSource from '../../../../backend/app/security_demo.py?raw'`);
-`vite.config.ts` sets `server.fs.allow: ['..']`. SHA-256 of the snapshot is
-compared with `fix_proposal.expected_source_hash` in the code viewer.
+- **Level 0, Project:** one card per top-level folder of Python (module)
+  files; root files go to "Root modules". Meta is real counts
+  (`N files · M functions · R routes`). Edges aggregate `IMPORTS`,
+  `DEPENDS_ON`, `CALLS` across groups, labelled with the count.
+- **Level 1, Folder:** clicking a card expands its module (file) nodes in
+  place inside a container over the card's home; other groups stay mounted
+  and dimmed, a vignette shows, and cross-group edges become ghost
+  (faded, dashed) edges. Back button (ember pill) + breadcrumb
+  (`Project › LAYER › file.py`); Esc goes back one level.
+- **Level 2, File:** clicking a file expands its classes, functions,
+  methods and routes with `CALLS`/`DEFINES`/`HANDLES_ROUTE` edges.
+  Clicking a function/route opens the code viewer at `source.line_start`.
 
-Overview-mode layout/graph contracts (panels, sashes, layer drill-down,
-curved `default` edges only) are unchanged from the original spec — see
-`data.ts`, `GraphCanvas.tsx` and git history for the full contract.
+Rules: `target: null` edges are never drawn; `status !== "resolved"` edges
+are dashed/dimmed and labelled unresolved ("structural only"). Positions
+inside each level come from `@dagrejs/dagre`. No fabricated complexity —
+cards show a real finding badge or route count. Selecting a finding glows
+its `related_graph_nodes`/`affected_files` and auto-drills to the file.
+Canvas chrome: dotted `Background`, `colorMode="dark"`, curved `default`
+edges, `<Controls position="bottom-left" showInteractive />`, MiniMap
+bottom-right. `nodeTypes` is module-level; nodes are `memo` components.
+
+### Stepper mapping (real state only)
+
+Load (project selected) → Map (SourceGraph ready) → Investigate (rule +
+Muse run) → Understand (finding selected) → Review (proposal pending/
+approved/rejected) → Apply (fix applied, rollback available) → Verify
+(investigation re-run after apply; backend summary shown word-for-word).
+`current`/`maxReached` derive only from `useProjectWorkflow` state;
+clicking a reachable step only focuses a panel, never fakes progress.
+
+### Auto-analyze & truthfulness
+
+Opening a project immediately fetches manifest → SourceGraph and shows
+Level 0 with a "Parsing project and building graph…" loading animation
+(`AiLoading`); backend errors show word-for-word with Retry. The rule
+defaults to the order-ownership preset. Findings, errors and summaries
+show backend wording verbatim; exactly one ember primary button at a time.
+AI waits use `AiLoading`/`AiInlinePulse` (Motion, reduced-motion safe).
 
 ## Before you finish
 

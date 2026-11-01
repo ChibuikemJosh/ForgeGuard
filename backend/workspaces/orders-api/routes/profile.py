@@ -1,0 +1,17 @@
+from fastapi import APIRouter, Depends, HTTPException
+
+from auth import get_current_customer
+from db import ORDERS
+from models import Customer, Order
+
+router = APIRouter()
+
+
+@router.get("/profile/orders/{order_id}")
+def get_own_order(order_id: str, customer: Customer = Depends(get_current_customer)) -> Order:
+    order = ORDERS.get(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    if order.owner_id != customer.customer_id:
+        raise HTTPException(status_code=403, detail="Order does not belong to customer.")
+    return order

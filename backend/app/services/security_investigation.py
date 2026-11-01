@@ -148,6 +148,10 @@ class SecurityInvestigationService:
 
         if evidence_items and not valid_items:
             errors.append("Agent-proposed locations did not pass evidence validation.")
+        if getattr(agent, "last_truncated", False):
+            errors.append(
+                "Project file listing was truncated; not all Python files were sent to the model."
+            )
         return InvestigationResult(
             investigation_id=investigation_id,
             project_id=project.project_id,

@@ -9,6 +9,8 @@ import { ClosingSection, SiteFooter } from "../components/landing/SiteFooter";
 import { StackSection } from "../components/landing/StackSection";
 import { Ticker } from "../components/landing/Ticker";
 import { WorkflowSection } from "../components/landing/WorkflowTabs";
+import { ScrollStory } from "../components/landing/ScrollStory";
+import { FaqCarousel } from "../components/landing/FaqCarousel";
 
 const BOOT_MS = 1500;
 
@@ -47,9 +49,11 @@ export default function Home() {
           <Hero />
           <Ticker />
           <Capabilities />
+          <ScrollStory />
           <WorkflowSection />
           <ModelSection />
           <StackSection />
+          <FaqCarousel />
           <ClosingSection />
         </main>
         <SiteFooter />

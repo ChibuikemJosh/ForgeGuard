@@ -52,6 +52,11 @@ export function useProjectWorkflow() {
   const fail = useCallback((e: unknown, retry: ProjectPhase) => {
     if (e instanceof DOMException && e.name === "AbortError") { patch({ busy: false }); return; }
     const msg = e instanceof Error ? e.message : "Request failed";
+    if (msg.includes("404") && msg.includes("Unknown")) {
+      const friendly = "The backend restarted and lost this session's investigation. Run the investigation again (or re-upload the project folder).";
+      const recoverPhase: ProjectPhase = stateRef.current.project && stateRef.current.graph ? "graph_ready" : "idle";
+      patch({ busy: false, error: friendly, phase: recoverPhase, retryPhase: recoverPhase }); toast.error(friendly); return;
+    }
     patch({ busy: false, error: msg, phase: "error", retryPhase: retry }); toast.error(msg);
   }, [patch]);
 
@@ -98,12 +103,6 @@ export function useProjectWorkflow() {
   const useSample = useCallback(async (sample: SampleProject) => {
     patch({ busy: true, error: null });
     try { const ref = await call("POST", "/api/workspace/projects", (s) => api.openProject(sample.path, sample.name, s)); patch({ busy: false }); await selectProjectRef(ref); }
-    catch (e) { fail(e, "idle"); }
-  }, [call, fail, patch, selectProjectRef]);
-
-  const uploadZip = useCallback(async (file: File) => {
-    patch({ busy: true, error: null });
-    try { const ref = await call("POST", "/api/workspace/projects/upload", (s) => api.uploadProjectZip(file, s)); patch({ busy: false }); await selectProjectRef(ref); toast.success(`Uploaded ${file.name}`); }
     catch (e) { fail(e, "idle"); }
   }, [call, fail, patch, selectProjectRef]);
 
@@ -185,11 +184,11 @@ export function useProjectWorkflow() {
   const rerun = useCallback(async () => { await analyze(); await investigate(); }, [analyze, investigate]);
 
   const actions = useMemo(() => ({
-    checkHealth, loadSamples, useSample, uploadZip, uploadFolder, analyze, investigate, rerun, changeProject, refresh,
+    checkHealth, loadSamples, useSample, uploadFolder, analyze, investigate, rerun, changeProject, refresh,
     setRule: (r: SecurityRule | null) => patch({ rule: r }),
     selectFinding, selectNode, openFile, generateFix, review, apply, rollback, cancel,
     clearError: () => patch({ error: null, phase: stateRef.current.retryPhase }),
-  }), [analyze, apply, cancel, changeProject, checkHealth, generateFix, investigate, loadSamples, openFile, patch, refresh, rerun, review, rollback, selectFinding, selectNode, uploadFolder, uploadZip, useSample]);
+  }), [analyze, apply, cancel, changeProject, checkHealth, generateFix, investigate, loadSamples, openFile, patch, refresh, rerun, review, rollback, selectFinding, selectNode, uploadFolder, useSample]);
 
   return { state, actions };
 }

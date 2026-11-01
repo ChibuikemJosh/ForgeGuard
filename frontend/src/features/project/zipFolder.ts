@@ -100,7 +100,7 @@ export async function zipFolder(files: File[]): Promise<ZippedFolder> {
   for (const file of files) {
     const parts = relativePath(file).split("/");
     const dirs = parts.slice(0, -1);
-    if (dirs.some((d) => IGNORED_DIRECTORIES.has(d)) || isSensitive(parts[parts.length - 1]) || file.size > MAX_FILE_BYTES) {
+    if (dirs.some((d) => IGNORED_DIRECTORIES.has(d)) || parts[parts.length - 1] === ".DS_Store" || isSensitive(parts[parts.length - 1]) || file.size > MAX_FILE_BYTES) {
       skippedCount++;
       continue;
     }

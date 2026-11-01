@@ -94,7 +94,7 @@ export default function Workspace() {
         <div className="flex min-w-0 flex-1 flex-col gap-1.5" id="workspace-graph">
           {!pstate.project ? (
             <div className="min-h-0 flex-1 overflow-auto">
-              <ProjectPicker samples={pstate.samples} busy={pstate.busy} onUseSample={pactions.useSample} onUpload={pactions.uploadZip} onUploadFolder={pactions.uploadFolder} />
+              <ProjectPicker samples={pstate.samples} busy={pstate.busy} onUseSample={pactions.useSample} onUploadFolder={pactions.uploadFolder} />
               {pstate.error ? <p className="mt-2 flex items-center gap-2 rounded-lg border border-sev-warning/30 bg-panel px-3 py-2 font-mono text-[11px] text-sev-warning" role="alert">{pstate.error}<button type="button" onClick={pactions.clearError} className="underline">Dismiss</button></p> : null}
             </div>
           ) : (<>

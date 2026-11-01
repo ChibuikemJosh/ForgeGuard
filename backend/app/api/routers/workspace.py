@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import os
 import re
+import shutil
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -13,6 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.config import is_production
 from app.schemas.code_intelligence import CodeIndex
 from app.schemas.project_fix import (
     CreateFixProposalRequest,
@@ -66,6 +70,47 @@ SAMPLE_PROJECTS = [
 ]
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+logger = logging.getLogger(__name__)
+_UPLOAD_DIR_RE = re.compile(r"^.+-[0-9a-f]{8}$")
+_RATE_LIMIT = 10
+_RATE_WINDOW_SECONDS = 3600
+_rate_hits: dict[str, list[float]] = {}
+
+
+def _check_rate_limit(request: Request) -> None:
+    if not is_production():
+        return
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    hits = [h for h in _rate_hits.get(ip, []) if now - h < _RATE_WINDOW_SECONDS]
+    if len(hits) >= _RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded: at most 10 AI requests per hour in the hosted demo. Please try again later.")
+    hits.append(now)
+    _rate_hits[ip] = hits
+
+
+def _cleanup_old_uploads(root: Path) -> None:
+    try:
+        ttl_hours = float(os.environ.get("FORGE_UPLOAD_TTL_HOURS", "6"))
+    except ValueError:
+        ttl_hours = 6.0
+    cutoff = time.time() - ttl_hours * 3600
+    sample_paths = {s.path for s in SAMPLE_PROJECTS}
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if not entry.is_dir() or entry.name in sample_paths:
+                continue
+            if not _UPLOAD_DIR_RE.match(entry.name):
+                continue
+            if entry.stat().st_mtime >= cutoff:
+                continue
+            shutil.rmtree(entry)
+        except Exception as error:  # never fail the upload
+            logger.warning("Could not clean up old upload %s: %s", entry, error)
 
 
 class OpenProjectRequest(BaseModel):
@@ -89,6 +134,8 @@ class InvestigateRequest(BaseModel):
 @router.post("/projects", response_model=ProjectReference)
 def open_project(request: OpenProjectRequest) -> ProjectReference:
     """Register an existing directory inside the configured workspace root."""
+    if is_production() and request.path not in {s.path for s in SAMPLE_PROJECTS}:
+        raise HTTPException(status_code=403, detail="Only sample projects can be opened in the hosted demo. Upload a project folder instead.")
     try:
         return workspace_service.register_project(request.path, request.name)
     except WorkspaceError as error:
@@ -187,6 +234,7 @@ async def upload_project(request: Request, name: str | None = Query(default=None
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as error:
         raise HTTPException(status_code=400, detail="Upload is not a valid .zip file.") from error
+    _cleanup_old_uploads(root)
     dest.mkdir(parents=True, exist_ok=False)
     try:
         for info in archive.infolist():
@@ -196,6 +244,8 @@ async def upload_project(request: Request, name: str | None = Query(default=None
             if Path(info.filename).is_absolute() or ".." in parts:
                 raise HTTPException(status_code=400, detail="Zip contains a path outside the project.")
             if any(part in {".git", ".venv", "__pycache__", "node_modules"} for part in parts):
+                continue
+            if Path(info.filename).name == ".DS_Store":
                 continue
             if _is_sensitive_file(Path(info.filename).name):
                 continue
@@ -247,8 +297,9 @@ def get_file_content(project_id: str, path: str = Query(...)) -> FileContentResp
 
 
 @router.post("/projects/{project_id}/investigate", response_model=InvestigationResult)
-def investigate_project(project_id: str, request: InvestigateRequest) -> InvestigationResult:
+def investigate_project(project_id: str, request: InvestigateRequest, http_request: Request) -> InvestigationResult:
     """Investigate a registered project against a security rule."""
+    _check_rate_limit(http_request)
     try:
         reference = workspace_service.get_project(project_id)
         index = _indexer.index_project(workspace_service, project_id)
@@ -266,7 +317,8 @@ def investigate_project(project_id: str, request: InvestigateRequest) -> Investi
     "/projects/{project_id}/findings/{finding_id}/fix-proposals",
     response_model=ProjectFixProposal,
 )
-def create_fix_proposal(project_id: str, finding_id: str, request: CreateFixProposalRequest) -> ProjectFixProposal:
+def create_fix_proposal(project_id: str, finding_id: str, request: CreateFixProposalRequest, http_request: Request) -> ProjectFixProposal:
+    _check_rate_limit(http_request)
     try:
         return _fix_service().create_proposal(project_id, finding_id, request.instructions)
     except FixProposalError as error:

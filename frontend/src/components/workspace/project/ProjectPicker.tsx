@@ -1,12 +1,11 @@
 import { useEffect, useRef } from "react";
 import type { SampleProject } from "../../../features/project/types";
 
-interface Props { samples: SampleProject[]; busy: boolean; onUseSample: (s: SampleProject) => void; onUpload: (f: File) => void; onUploadFolder: (files: File[]) => void }
+interface Props { samples: SampleProject[]; busy: boolean; onUseSample: (s: SampleProject) => void; onUploadFolder: (files: File[]) => void }
 
 const secondaryButton = "rounded border border-line px-3 py-2 text-left font-ui text-[12px] text-zinc-200 hover:bg-ide-hover disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ide-blue";
 
-export function ProjectPicker({ samples, busy, onUseSample, onUpload, onUploadFolder }: Props) {
-  const fileRef = useRef<HTMLInputElement>(null);
+export function ProjectPicker({ samples, busy, onUseSample, onUploadFolder }: Props) {
   const folderRef = useRef<HTMLInputElement>(null);
   // `webkitdirectory` is not in React's input typings, so set it on the DOM node.
   useEffect(() => { folderRef.current?.setAttribute("webkitdirectory", ""); }, []);
@@ -24,11 +23,6 @@ export function ProjectPicker({ samples, busy, onUseSample, onUpload, onUploadFo
           onChange={(e) => { const files = Array.from(e.target.files ?? []); if (files.length) onUploadFolder(files); e.target.value = ""; }} />
         <button type="button" disabled={busy} onClick={() => folderRef.current?.click()} className={secondaryButton}>
           Upload project folder<span className="block font-mono text-[9px] text-zinc-500">Zipped in your browser; .git, node_modules, venvs and .env files are skipped.</span>
-        </button>
-        <input ref={fileRef} type="file" accept=".zip,application/zip" className="hidden" aria-label="Upload a zipped Python project"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ""; }} />
-        <button type="button" disabled={busy} onClick={() => fileRef.current?.click()} className={secondaryButton}>
-          Upload .zip project<span className="block font-mono text-[9px] text-zinc-500">Extracted on the backend; code is parsed, never executed.</span>
         </button>
       </div>
     </section>

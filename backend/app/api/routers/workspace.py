@@ -27,7 +27,7 @@ from app.schemas.project_fix import (
 )
 from app.schemas.security import SecurityRule
 from app.schemas.security_investigation import InvestigationResult
-from app.schemas.source_graph import SourceGraph
+from app.schemas.source_graph import SourceGraph, SourceGraphNodeMatch
 from app.schemas.workspace import ProjectManifest, ProjectReference
 from app.services.project_fix_proposals import (
     FixProposalError,
@@ -43,6 +43,7 @@ from app.services.project_workspace import (
 from app.services.python_indexer import PythonIndexer
 from app.services.security_investigation import SecurityInvestigationService
 from app.services.source_graph_builder import SourceGraphBuilder
+from app.services.source_graph_lookup import SourceGraphNodeLookup
 from app.services.symbol_resolution import SymbolResolver
 
 
@@ -190,6 +191,19 @@ def get_source_graph(project_id: str) -> SourceGraph:
         return _builder.build(reference, index, resolution)
     except WorkspaceError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+def get_nodes_on_path_python(
+    project_id: str,
+    file_path: str,
+    line_number: int,
+) -> list[SourceGraphNodeMatch]:
+    """Return SourceGraph nodes associated with a project-relative Python location."""
+    return SourceGraphNodeLookup(workspace_service).get_nodes_on_path_python(
+        project_id,
+        file_path,
+        line_number,
+    )
 
 
 def _fix_service() -> ProjectFixProposalService:

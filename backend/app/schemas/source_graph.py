@@ -46,6 +46,21 @@ class SourceGraphNode(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SourceGraphNodeMatch(BaseModel):
+    """A SourceGraph node matched to a reported source location."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    node_type: str
+    name: str
+    qualified_name: str | None = None
+    file_path: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    parent_node_id: str | None = None
+
+
 class SourceGraphEdge(BaseModel):
     """A relationship in a read-only SourceGraph."""
 

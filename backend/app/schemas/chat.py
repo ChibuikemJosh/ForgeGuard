@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.source_graph import SourceGraphNodeMatch
+
 
 class ChatRequest(BaseModel):
     """Website chat input describing a custom security violation."""
@@ -11,6 +13,7 @@ class ChatRequest(BaseModel):
     custom_security_violation_details: str = Field(min_length=1)
     project_folder: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
+    project_id: str | None = Field(default=None, min_length=1)
 
 
 class ChatLocation(BaseModel):
@@ -20,3 +23,4 @@ class ChatLocation(BaseModel):
 
     filename: str
     linenumber: int
+    relatednodes: list[SourceGraphNodeMatch] = Field(default_factory=list)

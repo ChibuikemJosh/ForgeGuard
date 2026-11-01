@@ -51,6 +51,7 @@ class SecurityInvestigationService:
                 project_folder,
                 investigation_id,
                 context_files,
+                project_id=project.project_id,
             )
             if not locations and self._max_follow_up_rounds() > 0:
                 locations = self._find_locations(
@@ -61,6 +62,7 @@ class SecurityInvestigationService:
                     project_folder,
                     investigation_id,
                     context_files,
+                    project_id=project.project_id,
                     follow_up=True,
                 )
         except AgentConfigurationError as error:
@@ -208,6 +210,7 @@ class SecurityInvestigationService:
         investigation_id,
         context_files,
         follow_up=False,
+        project_id=None,
     ):
         parameters = inspect.signature(agent.find_violations).parameters
         kwargs = {}
@@ -215,6 +218,8 @@ class SecurityInvestigationService:
             kwargs["context_files"] = context_files
         if "follow_up" in parameters:
             kwargs["follow_up"] = follow_up
+        if "project_id" in parameters:
+            kwargs["project_id"] = project_id
         return agent.find_violations(
             details,
             project_folder,

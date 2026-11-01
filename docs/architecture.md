@@ -72,6 +72,7 @@ Implemented today:
 - Integration with Ram's Violations Finder Agent through its `find_violations` interface. The agent receives the rule text and project folder and returns source locations. The backend validates those locations and returns findings as `potential` unless evidence is validated.
 - Investigation prompts also include bounded structural SourceGraph observations and indexing limitations. These observations guide the model but are explicitly not treated as semantic proof.
 - Investigation context may be truncated for large projects. The result records this through `truncated` (also available as `context_truncated`) and appends it to `summary`.
+- Investigation planning selects graph-connected Python files using rule terms before the model call, and permits at most one bounded follow-up round through `FORGE_INVESTIGATION_MAX_FOLLOW_UP_ROUNDS`.
 
 The backend does not treat AI-generated locations as confirmed vulnerabilities. Missing or invalid evidence yields `inconclusive` findings. Evidence validation establishes that a reported source location is legitimate; it does not independently prove that the code violates the security rule.
 

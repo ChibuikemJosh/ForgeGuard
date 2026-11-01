@@ -90,3 +90,8 @@ class InvestigationResult(BaseModel):
     findings: list[InvestigationFinding] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     summary: str = ""
+    truncated: bool = False
+
+    @property
+    def context_truncated(self) -> bool:
+        return self.truncated

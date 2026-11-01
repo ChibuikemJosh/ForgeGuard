@@ -1,58 +1,86 @@
 # Forge Guard
 
-Forge Guard is an early-stage graph based security analysis tool for
-AI-assisted Python backend development. Its MVP detects one business-logic
-authorization problem: an authenticated customer retrieving another
-customer's order.
+Forge Guard is an AI-powered software engineering and security analysis environment.
+It inspects existing Python projects, builds a read-only SourceGraph from their
+structure, and investigates user-defined security or business rules with a
+Meta Muse-powered agent. Findings are evidence-gated: the backend validates
+reported source locations before returning them.
 
-## Current implementation
+## Problem statement
 
-- Preserved React + TypeScript + Vite landing page at `/`.
-- Existing graph-to-Python workspace at `/workspace`.
-- Controlled FastAPI vulnerable and corrected order example.
-- Deterministic AST-based ownership analysis for that controlled example.
-- Structured security findings, evidence, semantic graph data, fix proposals,
-  and verification results.
-- FastAPI endpoints for analysis and the stable order-ownership rule.
-- Backend tests covering vulnerable and corrected behavior.
+Modern applications often fail in business logic and authorization paths that are
+hard to see from framework-level scanning alone. Forge Guard connects project
+structure, source evidence, and AI-assisted investigation so that potential
+violations can be traced to real files, symbols, and graph nodes.
 
-The analysis is deliberately narrow. It is not a general Python security
-scanner and does not claim coverage of arbitrary FastAPI projects.
+## Current MVP features
 
-## Repository layout
+- Register an existing Python project inside a configured workspace root.
+- Discover and index Python source files.
+- Resolve structural symbols and relationships.
+- Generate a read-only SourceGraph.
+- Investigate user-provided security rules with Meta Muse.
+- Validate model-proposed source locations against actual source.
+- Map valid findings to SourceGraph nodes.
+- Review, apply, roll back, and verify controlled corrections.
+- Chat endpoint for violation-location lookup.
+- Deterministic backend tests for investigation and evidence validation.
+
+## Core user workflow
+
+1. Register a Python project.
+2. Index its source and generate its SourceGraph.
+3. Provide a security or business rule.
+4. Run an investigation.
+5. Review findings and validated source evidence.
+6. Ask for explanations or proposed corrections through chat.
+7. Review any correction before application.
+8. Re-run the investigation after a correction.
+
+## Architecture overview
+
+Forge Guard is a modular FastAPI monolith.
+
+- `WorkspaceService` discovers and safely reads project files.
+- `PythonIndexer` extracts structural AST facts.
+- `SymbolResolver` resolves structural relationships with explicit statuses.
+- `SourceGraphBuilder` creates a read-only SourceGraph.
+- `SecurityInvestigationService` prepares rule context and validates findings.
+- `ViolationsFinderAgent` calls Meta Muse and parses locations.
+- `EvidenceValidator` independently validates source evidence.
+- Existing security services provide controlled demonstration analysis, proposals, approval, application, rollback, and verification.
+
+The frontend renders backend-provided data and does not infer source facts.
+
+## Technology stack
+
+Backend:
+
+- Python 3.11+
+- FastAPI
+- Pydantic
+- LangChain and LangGraph
+- Meta Muse API
+- pytest
+
+Frontend:
+
+- React
+- TypeScript
+- Vite
+
+## Repository structure
 
 ```text
-frontend/   React, TypeScript, Vite application and visualiser
-backend/    FastAPI application, security models, services, and tests
-docs/       Architecture, project model, graph-to-code, and security docs
+frontend/   React, TypeScript, and Vite application
+backend/    FastAPI application, schemas, services, and tests
+docs/       Architecture and API contract documentation
+agent_loop/ Ram's orchestration implementation
 ```
 
-## Prerequisites
+## Setup and installation
 
-- Node.js 20.19+ (or 22.12+)
-- npm 10+
-- Python 3.11+
-
-## Run the frontend
-
-From `frontend/`:
-
-```powershell
-npm install
-npm run dev
-```
-
-The landing page runs at `http://localhost:5173`. The frontend uses
-`VITE_API_BASE_URL` when set and otherwise calls
-`http://127.0.0.1:8000`. Copy `frontend/.env.example` to
-`frontend/.env.local` to override it.
-
-```powershell
-npm run lint
-npm run build
-```
-
-## Run the backend
+### Backend
 
 From `backend/`:
 
@@ -61,6 +89,26 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+Create `backend/app/.env` with:
+
+```text
+META_MODEL_API_KEY=<your-key>
+```
+
+Optional variables:
+
+```text
+META_MODEL_NAME=muse-spark-1.3
+META_MODEL_BASE_URL=https://api.meta.ai/v1
+FORGE_WORKSPACE_ROOT=<workspace-root>
+FORGE_MAX_FILE_SIZE_BYTES=1048576
+```
+
+Run the backend:
+
+```powershell
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -70,111 +118,39 @@ Run tests:
 pytest
 ```
 
-## Forge Guard demo
+### Frontend
 
-The controlled demo uses in-memory orders and an `x-customer-id` header as
-minimal authentication input. It has two reproducible states:
-
-```text
-GET /api/demo/vulnerable/orders/order-bob
-GET /api/demo/corrected/orders/order-bob
-```
-
-With `x-customer-id: customer-alice`, the vulnerable route returns Bob's order
-while the corrected route returns HTTP 403. No real customer data or
-production authentication infrastructure is involved.
-
-Analyze the vulnerable state:
+From `frontend/`:
 
 ```powershell
-curl -X POST http://127.0.0.1:8000/api/security/analyze
+npm install
+npm run dev
 ```
 
-Analyze the corrected state:
+## Current limitations
 
-```powershell
-curl -X POST "http://127.0.0.1:8000/api/security/analyze?corrected=true"
-```
+- Investigation is Python-only.
+- Large projects may be truncated during investigation.
+- AI findings are potential, not confirmed vulnerabilities.
+- Evidence validation checks source legitimacy, not rule truth.
+- General arbitrary-file correction is not implemented.
+- Fix proposals and verification are controlled-demo capabilities.
+- ConstructionGraph and advanced data-flow analysis are planned, not implemented.
 
-The response contains the stable rule, evidence-backed finding (when present),
-semantic graph, review-only remediation proposal, and an executed verification
-result. The proposal is not applied automatically.
+## Future roadmap
 
-See [docs/security-analysis.md](docs/security-analysis.md) for the contract and
-limitations.
-
-## Existing graph-to-Python workflow
-
-The `/workspace` route still demonstrates the original deterministic graph
-workflow for two Function nodes. It is preserved separately from Forge Guard's
-security graph and is documented in [docs/graph-to-code.md](docs/graph-to-code.md).
+- Multi-language project analysis.
+- More advanced security and business-rule analysis.
+- Graph-based software engineering and system design.
+- Visual representation of components and relationships.
+- Cross-layer dependency and impact analysis.
+- AI-assisted explanation, correction, and generation.
+- Intelligent context retrieval for large projects.
+- Advanced engineering workflows.
 
 ## Agent and tool boundaries
 
-- Ram owns orchestration and the future agentic review loop.
+- Ram owns orchestration in `agent_loop/`.
 - Bisal owns the reusable Meta model tool.
-- Kenny owns the React graph visualiser and workspace UI.
-- This backend owns the controlled example, security schemas, deterministic
-  analysis, graph construction, and verification contracts.
-
-Project Investigation uses the Meta Model API (Muse) from the backend only.
-AI fix proposals require human approval before application; rollback is supported.
-No database, Redis, or production authentication infrastructure is implemented.
-
-## Project Investigation (local testing)
-
-Workflow: Select project (SourceGraph builds automatically) → Select rule → Run AI
-investigation (Meta Muse model) → View findings → Explore graph → AI-assisted
-fix → Review → Apply / Rollback. AI findings are shown as **Potential** (the
-backend status verbatim), never Confirmed.
-
-Meta Model API config (`backend/.env`, never in the frontend):
-
-```bash
-cp .env.example .env   # then put the real META_MODEL_API_KEY in .env
-# META_MODEL_BASE_URL=https://api.meta.ai/v1
-# META_MODEL_NAME=muse-spark-1.3   # optional preview: muse-wonder-1.0
-```
-
-### Run locally (macOS / zsh)
-
-```bash
-# backend
-cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # then put the real META_MODEL_API_KEY in .env
-pytest
-uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8000
-
-# frontend (new terminal)
-cd frontend && npm install && npm run dev   # http://localhost:5173/workspace
-```
-
-Note: `--reload-dir app` is required so applying a fix inside
-`backend/workspaces/` does not restart the server and wipe in-memory state.
-CORS origins can be overridden with `FORGE_CORS_ORIGINS` (comma-separated).
-
-The bundled sample project lives at `backend/workspaces/orders-api/`; use the
-**Use sample project: Orders API** button in the workspace picker. You can also upload a project
-folder or a `.zip` from the same picker (folders are zipped in the browser,
-skipping `.git`/`node_modules`/venvs/`.env`; the zip is extracted safely on the backend,
-sensitive files are skipped, code is parsed with `ast` and never executed).
-Reset the sample after applying fixes:
-
-```bash
-git checkout backend/workspaces/orders-api
-```
-
-### Curl smoke test
-
-```bash
-PID=$(curl -s -X POST localhost:8000/api/workspace/projects -H 'Content-Type: application/json' -d '{"path":"orders-api"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["project_id"])')
-curl -s localhost:8000/api/workspace/projects/$PID/source-graph | python3 -m json.tool | head -40
-curl -s -X POST localhost:8000/api/workspace/projects/$PID/investigate -H 'Content-Type: application/json' \
-  -d '{"rule":{"rule_id":"order-ownership-authorization","title":"Customers may only access their own orders","invariant":"The authenticated customer ID must be compared with the order owner before the order is returned."}}' | python3 -m json.tool
-```
-
-Expected (real Muse): status `completed` with evidence in `routes/orders.py`
-and nothing in `routes/profile.py`. Without a key, status `failed` with
-"AI provider is not configured", and the UI shows that message verbatim.
+- Kenny owns the React visualiser and workspace UI.
+- The backend owns schemas, workspace, indexing, graph construction, investigation, evidence validation, and controlled operations.

@@ -201,8 +201,8 @@ class ViolationsFinderAgent:
         )
         self._graph = None
         self._graph_key: str | None = None
-        self.last_truncated = False
-        self.last_file_count = 0
+        self.last_truncated: bool = False
+        self.last_files_sent: int = 0
 
     @staticmethod
     def _api_key() -> str:
@@ -275,7 +275,7 @@ class ViolationsFinderAgent:
             )
         files, truncated = _collect_python_files(folder)
         self.last_truncated = truncated
-        self.last_file_count = len(files)
+        self.last_files_sent = len(files)
         if self._graph is None or self._graph_key != api_key:
             self._graph = self._build_graph(api_key)
             self._graph_key = api_key

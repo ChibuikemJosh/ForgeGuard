@@ -71,8 +71,9 @@ Implemented today:
 - Evidence validation against file existence, containment, line range, excerpt consistency, symbol identity, and file-hash freshness.
 - Integration with Ram's Violations Finder Agent through its `find_violations` interface. The agent receives the rule text and project folder and returns source locations. The backend validates those locations and returns findings as `potential` unless evidence is validated.
 - Investigation prompts also include bounded structural SourceGraph observations and indexing limitations. These observations guide the model but are explicitly not treated as semantic proof.
+- Investigation context may be truncated for large projects. The result records this through `truncated` (also available as `context_truncated`) and appends it to `summary`.
 
-The backend does not treat AI-generated locations as confirmed vulnerabilities. Missing or invalid evidence yields `inconclusive` or `unsupported` findings.
+The backend does not treat AI-generated locations as confirmed vulnerabilities. Missing or invalid evidence yields `inconclusive` findings. Evidence validation establishes that a reported source location is legitimate; it does not independently prove that the code violates the security rule.
 
 Ram's agent is a LangGraph/LangChain wrapper around a Meta Model compatible API. It is not a second orchestrator in this backend; the backend calls it as an investigation component.
 
@@ -100,3 +101,8 @@ General arbitrary file creation and command execution are not implemented.
 - `source_graph_builder.py`: read-only SourceGraph construction.
 - `security_analysis.py`, `security_fixes.py`, `security_verification.py`: controlled security demonstration and fix workflow.
 - `graph_validation.py`, `code_generation.py`: Function graph validation and Python generation.
+## SourceGraph and ConstructionGraph
+
+`SourceGraph` is a read-only structural representation of an existing Python project. It is generated from indexing and symbol resolution and is not modified by AI findings.
+
+`ConstructionGraph` is a separate planned concept for visual system design and construction. It is not fully implemented in this backend. Future graph-to-code work may extend it, but it is not part of the current Source-to-Graph investigation pipeline.

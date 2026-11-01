@@ -225,7 +225,7 @@ Requires `x-customer-id` header.
 
 ## Security investigation
 
-### POST /api/workspace/projects/{project_id}/investigate — Implemented
+### POST /api/workspace/projects/{project_id}/investigate ï¿½ Implemented
 
 Investigates a registered project against a user-provided security rule.
 
@@ -237,7 +237,8 @@ Request body (`InvestigateRequest`):
     "rule_id": "order-ownership-authorization",
     "title": "Authenticated customers may access only their own orders",
     "invariant": "The authenticated customer ID must be compared with the retrieved order owner before the order is returned."
-  }
+  },
+  "session_id": "optional-investigation-session"
 }
 ```
 
@@ -282,13 +283,16 @@ Response `200`: `InvestigationResult`
     }
   ],
   "errors": [],
-  "summary": "Investigated 1 files; agent returned 1 location(s), 1 validated."
+  "summary": "Investigated 1 files; agent returned 1 location(s), 1 validated.",
+  "truncated": false
 }
 ```
 
 Workflow: registers nothing; indexes the project, builds its SourceGraph, invokes Ram's Violations Finder Agent with the rule and project folder, then validates every returned location against file existence, containment, line range, excerpt consistency, symbol identity, and file-hash freshness. Invalid locations are reported in `errors` and do not become validated evidence.
 
 Integration note: AI-generated findings are returned as `potential` unless all evidence is valid and directly observed. The backend does not treat the agent's assertion as a confirmed vulnerability.
+
+Investigation results may report `truncated: true` when the Meta Muse context omitted files or source content due to investigation limits. In that case, `summary` also notes that project context was truncated.
 
 
 ## Status values

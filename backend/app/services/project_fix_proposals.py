@@ -267,7 +267,7 @@ class ProjectFixProposalService:
             raise FixConflictError("This proposal has already been applied; use rollback before retrying.")
         target = self._target_path(proposal)
         try:
-            current = target.read_text(encoding="utf-8")
+            current = target.read_bytes().decode("utf-8")
         except OSError as error:
             raise FixNotFoundError(str(error)) from error
         if _digest(current) != proposal.expected_source_hash:
@@ -286,7 +286,10 @@ class ProjectFixProposalService:
         if not proposal.rollback_available or original is None:
             raise FixConflictError("No rollback is available for this proposal.")
         target = self._target_path(proposal)
-        current = target.read_text(encoding="utf-8")
+        try:
+            current = target.read_bytes().decode("utf-8")
+        except OSError as error:
+            raise FixNotFoundError(str(error)) from error
         if _digest(current) != self._applied_hash.get(proposal_id):
             raise FixConflictError("The file changed after application; refusing rollback.")
         self._atomic_write(target, original)
@@ -297,7 +300,13 @@ class ProjectFixProposalService:
 
     @staticmethod
     def _atomic_write(target: Path, content: str) -> None:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=target.parent,
+            delete=False,
+        ) as tmp:
             tmp.write(content)
             tmp_path = Path(tmp.name)
         os.replace(tmp_path, target)

@@ -136,11 +136,23 @@ def _is_visible(path: Path, root: Path) -> bool:
     )
 
 
-def _collect_python_files(folder: Path) -> tuple[list[tuple[str, str]], bool]:
+def _collect_python_files(
+    folder: Path,
+    allowed_paths: set[str] | None = None,
+) -> tuple[list[tuple[str, str]], bool]:
     """Return [(relative path, content)] for Python files, plus truncated flag."""
     keywords = ("route", "api", "view", "controller", "endpoint", "service", "auth", "handler", "model")
     candidates = sorted(
-        (p for p in folder.rglob("*.py") if p.is_file() and _is_visible(p, folder)),
+        (
+            p
+            for p in folder.rglob("*.py")
+            if p.is_file()
+            and _is_visible(p, folder)
+            and (
+                allowed_paths is None
+                or p.relative_to(folder).as_posix() in allowed_paths
+            )
+        ),
         key=lambda p: (
             0 if any(k in p.relative_to(folder).as_posix().lower() for k in keywords) else 1,
             p.relative_to(folder).as_posix().lower(),
@@ -278,6 +290,8 @@ class ViolationsFinderAgent:
         custom_security_violation_details: str,
         project_folder: str,
         session_id: str,
+        context_files: set[str] | None = None,
+        follow_up: bool = False,
     ) -> list[ChatLocation]:
         """Map violation details to source locations for one session."""
         api_key = self._api_key()
@@ -291,7 +305,7 @@ class ViolationsFinderAgent:
             raise ProjectFolderError(
                 f"Project folder does not exist: {project_folder}"
             )
-        files, truncated = _collect_python_files(folder)
+        files, truncated = _collect_python_files(folder, allowed_paths=context_files)
         self.last_truncated = truncated
         self.last_files_sent = len(files)
         if self._graph is None or self._graph_key != api_key:
@@ -300,6 +314,12 @@ class ViolationsFinderAgent:
         parts = [
             "Custom security violation to detect:",
             custom_security_violation_details,
+            (
+                "\nThis is a bounded follow-up analysis. Re-examine the supplied "
+                "context and return only newly supported locations."
+                if follow_up
+                else ""
+            ),
             f"\nPython project at {folder} ({len(files)} files shown"
             + ("; listing truncated" if truncated else "")
             + "):",

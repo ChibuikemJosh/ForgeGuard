@@ -1,6 +1,8 @@
 # test
 from __future__ import annotations
 
+import inspect
+import os
 import uuid
 
 from app.schemas.code_intelligence import CodeIndex
@@ -40,12 +42,27 @@ class SecurityInvestigationService:
         )
 
         project_folder = str(self.workspace.project_root(project.project_id))
+        context_files = self._plan_context_files(index, graph, rule)
+        details = self._rule_text(rule, index, graph, context_files)
         try:
-            locations = agent.find_violations(
-                self._rule_text(rule, index, graph),
+            locations = self._find_locations(
+                agent,
+                details,
                 project_folder,
                 investigation_id,
+                context_files,
             )
+            if not locations and self._max_follow_up_rounds() > 0:
+                locations = self._find_locations(
+                    agent,
+                    details
+                    + "\nEvidence was insufficient on the first pass. "
+                    "Perform one focused follow-up over the planned context.",
+                    project_folder,
+                    investigation_id,
+                    context_files,
+                    follow_up=True,
+                )
         except AgentConfigurationError as error:
             return InvestigationResult(
                 investigation_id=investigation_id,
@@ -86,6 +103,7 @@ class SecurityInvestigationService:
             )
 
         locations = locations or []
+        locations = self._deduplicate_locations(locations)
         truncated = getattr(agent, "last_truncated", False)
         validator = EvidenceValidator(self.workspace, project.project_id, index, graph)
         evidence_items = []
@@ -167,7 +185,113 @@ class SecurityInvestigationService:
             ),
         )
 
-    def _rule_text(self, rule, index=None, graph=None):
+    @staticmethod
+    def _deduplicate_locations(locations):
+        unique = []
+        seen = set()
+        for location in locations:
+            key = (
+                getattr(location, "filename", None),
+                getattr(location, "linenumber", None),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(location)
+        return unique
+
+    @staticmethod
+    def _find_locations(
+        agent,
+        details,
+        project_folder,
+        investigation_id,
+        context_files,
+        follow_up=False,
+    ):
+        parameters = inspect.signature(agent.find_violations).parameters
+        kwargs = {}
+        if "context_files" in parameters:
+            kwargs["context_files"] = context_files
+        if "follow_up" in parameters:
+            kwargs["follow_up"] = follow_up
+        return agent.find_violations(
+            details,
+            project_folder,
+            investigation_id,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _max_follow_up_rounds() -> int:
+        try:
+            configured = int(
+                os.environ.get("FORGE_INVESTIGATION_MAX_FOLLOW_UP_ROUNDS", "1")
+            )
+        except ValueError:
+            configured = 1
+        return max(0, min(configured, 1))
+
+    @staticmethod
+    def _plan_context_files(index, graph, rule):
+        """Select a bounded, graph-connected source context before model analysis."""
+        python_files = set(index.files)
+        terms = " ".join(
+            str(value or "")
+            for value in (
+                rule.rule_id,
+                rule.title,
+                rule.invariant,
+                rule.description,
+                rule.category,
+                rule.expected_property,
+                *rule.concepts,
+                *rule.indicators,
+            )
+        ).lower()
+        keywords = {
+            token.strip("_-")
+            for token in terms.replace("/", " ").replace(".", " ").split()
+            if len(token.strip("_-")) >= 4
+        }
+        selected = {
+            node.file_path
+            for node in graph.nodes
+            if node.file_path in python_files
+            and any(
+                keyword in " ".join(
+                    filter(
+                        None,
+                        (
+                            node.name,
+                            node.qualified_name,
+                            node.module,
+                            node.file_path,
+                        ),
+                    )
+                ).lower()
+                for keyword in keywords
+            )
+        }
+        if not selected:
+            return python_files
+
+        node_files = {
+            node.id: node.file_path
+            for node in graph.nodes
+            if node.file_path in python_files
+        }
+        selected_node_ids = {
+            node.id for node in graph.nodes if node.file_path in selected
+        }
+        for edge in graph.edges:
+            if edge.source in selected_node_ids and edge.target in node_files:
+                selected.add(node_files[edge.target])
+            if edge.target in selected_node_ids and edge.source in node_files:
+                selected.add(node_files[edge.source])
+        return selected
+
+    def _rule_text(self, rule, index=None, graph=None, context_files=None):
         title = rule.title or getattr(rule, "name", None) or rule.rule_id
         parts = [title]
         if rule.invariant:
@@ -192,15 +316,41 @@ class SecurityInvestigationService:
                 "do not treat these as semantic proof):"
             )
             for node in graph.nodes:
-                if node.file_path is not None:
+                if node.file_path is not None and (
+                    context_files is None or node.file_path in context_files
+                ):
                     parts.append(
                         f"- node={node.id} type={node.type} "
                         f"file={node.file_path} symbol={node.name}"
                     )
             for edge in graph.edges:
+                if context_files is not None:
+                    source_file = next(
+                        (
+                            node.file_path
+                            for node in graph.nodes
+                            if node.id == edge.source
+                        ),
+                        None,
+                    )
+                    target_file = next(
+                        (
+                            node.file_path
+                            for node in graph.nodes
+                            if node.id == edge.target
+                        ),
+                        None,
+                    )
+                    if source_file not in context_files and target_file not in context_files:
+                        continue
                 parts.append(
                     f"- edge={edge.type} source={edge.source} "
                     f"target={edge.target or '<unresolved>'} status={edge.status.value}"
+                )
+            if context_files is not None:
+                parts.append(
+                    "Planned source context: "
+                    + ", ".join(sorted(context_files))
                 )
         if index is not None and index.errors:
             parts.append(

@@ -1,8 +1,26 @@
 export const NAV_LINKS = [
   { label: "Capabilities", href: "#capabilities" },
+  { label: "How it works", href: "#how-it-works" },
   { label: "Workflow", href: "#workflow" },
-  { label: "Model", href: "#model" },
+  { label: "FAQ", href: "#faq" },
   { label: "Stack", href: "#stack" },
+] as const;
+
+export const HOW_STEPS = [
+  { n: "01", title: "Upload a Python folder", body: "Pick a folder in the browser. Ignored folders, .env files and files over 1 MB are skipped, then it is packed and extracted safely on the backend — parsed, never executed.", mono: "folder → zip in browser → POST /api/workspace/projects/upload" },
+  { n: "02", title: "See the SourceGraph", body: "Forge indexes the AST and maps folders, modules, classes, functions and routes into a three-level graph you can drill into, with real counts and source lines.", mono: "GET /source-graph · IMPORTS / CALLS / HANDLES_ROUTE" },
+  { n: "03", title: "Ask a security rule", body: "Choose a preset — like “customers may only access their own orders” — or write your own invariant, then run the Meta Muse investigation.", mono: "POST /investigate · muse-spark-1.3" },
+  { n: "04", title: "Check the evidence", body: "Every finding is labelled potential. The backend validates the file, line, excerpt and hash before it maps to a graph node, so you review real code, not a guess.", mono: "evidence: valid / invalid · status stays potential" },
+  { n: "05", title: "Approve, apply, re-run", body: "Muse proposes a full corrected file. Nothing is written until a human approves; apply is hash-checked and atomic, rollback restores the original, then you re-run to verify.", mono: "review → apply → rollback → investigate again" },
+] as const;
+
+export const FAQ_ITEMS = [
+  { q: "What does Forge Guard actually do?", a: "You upload a Python project folder, Forge builds a read-only SourceGraph of its modules, functions and routes, then a Meta Muse agent checks it against a security or business rule you pick. Findings come back as potential with validated source evidence pinned to graph nodes." },
+  { q: "Is my code executed or stored?", a: "Never executed — uploaded code is only read and parsed with Python's ast module. There is no account and no database: projects live on the backend disk under an unguessable id and are lost on refresh or restart by design. Old uploads are cleaned up automatically after a few hours." },
+  { q: "Are the findings confirmed vulnerabilities?", a: "No. Every finding is labelled potential. Evidence validation proves the cited file and line are real and unchanged — it does not prove the rule is broken. You read the excerpt, check the graph, and decide." },
+  { q: "How do fixes work?", a: "Select a finding and Muse drafts a full corrected file. The backend checks it parses as Python and actually changes something. A human must approve before apply; apply is hash-checked and atomic, and rollback restores the exact original so you can re-run the investigation." },
+  { q: "What projects work best?", a: "Small-to-medium Python projects, especially FastAPI-style services with routes, services and auth checks. The investigation reads up to 100 Python files / 400k characters, prioritising route, api, service and auth files, and warns you visibly when a project is truncated." },
+  { q: "Do I need an account or API key to try it?", a: "No account — the hosted demo is intentionally no-auth. Just open the workspace, try the bundled Orders API sample, or upload your own folder (max 10 MB after skipping ignored folders). Your code is sent to the Meta model API for investigation." },
 ] as const;
 
 export type ForgeNodeId = "api" | "schema" | "service" | "test";
@@ -28,10 +46,10 @@ export const FORGE_NODE_BY_ID: Record<ForgeNodeId, ForgeNodeMeta> = Object.fromE
 ) as Record<ForgeNodeId, ForgeNodeMeta>;
 
 export const CAPABILITIES = [
-  { n: "01", title: "Visual graph, real components", body: "Nodes are not drawings. Every block maps to a function, schema, API or test in your repo — with typed ports and a source location.", tag: "Graph editor" },
-  { n: "02", title: "Code and graph stay in sync", body: "Edit the code, the graph updates. Move a node, the source follows. One project model, viewed two ways — never two copies drifting apart.", tag: "Source mapping" },
-  { n: "03", title: "AI proposes. You approve.", body: "AI changes arrive as reviewable proposals against the graph — what it touches, what it connects, what breaks — before anything is written.", tag: "AI proposals" },
-  { n: "04", title: "Typed connections, checked", body: "Data, execution and dependency edges carry different rules and are validated independently. Invalid wiring fails before it runs.", tag: "Validation" },
+  { n: "01", title: "Folder in, graph out", body: "Upload a Python folder (or try the Orders API sample) and get a three-level SourceGraph — project, folder, file — built from the real AST, not a diagram you maintain.", tag: "SourceGraph" },
+  { n: "02", title: "Rules, not just signatures", body: "Investigate business-logic rules a scanner cannot see: order ownership, admin-only routes, invoice access. Pick a preset or write your own invariant.", tag: "Investigation" },
+  { n: "03", title: "Evidence before claims", body: "Muse proposes locations; the backend independently validates file, line range, excerpt, symbol and hash. Invalid locations never become validated evidence.", tag: "Evidence-gated" },
+  { n: "04", title: "AI proposes. You approve.", body: "Corrections arrive as a reviewable diff of a full corrected file. Human-only approval, hash-checked atomic apply, and one-click rollback.", tag: "Fix proposals" },
 ] as const;
 
 export const CONNECTIONS = [
@@ -41,8 +59,8 @@ export const CONNECTIONS = [
 ] as const;
 
 export const STACK = [
-  { layer: "Frontend", items: "React 19 · TypeScript · Vite · Tailwind CSS 4 · React Router · React Flow · Motion" },
-  { layer: "Backend", items: "FastAPI · Python 3.11+ · Uvicorn · pytest" },
-  { layer: "Contract", items: "GET /api/health · VITE_API_BASE_URL · CORS for local Vite origins" },
-  { layer: "Model", items: "ForgeProject · python · typed data / execution / dependency edges" },
+  { layer: "Frontend", items: "React 19 · TypeScript · Vite · Tailwind CSS 4 · React Flow · Motion — deployed on Vercel" },
+  { layer: "Backend", items: "FastAPI · Python 3.12 · Uvicorn (single process) · pytest — deployed on Render" },
+  { layer: "AI", items: "Meta Muse (muse-spark-1.3) via the Meta Model API · LangChain / LangGraph agent" },
+  { layer: "Contract", items: "Folder upload (10 MB max) · SourceGraph · evidence-validated findings · no auth, no database" },
 ] as const;

@@ -45,7 +45,7 @@ Response `200`: `ProjectReference`
 { "project_id": "project-abc123", "name": "Demo project", "relative_path": "demo" }
 ```
 
-Errors: `400` if the path is missing, not a directory, outside the workspace root, or uses path traversal.
+Errors: `400` if the path is missing, not a directory, outside the workspace root, or uses path traversal. `403` when `FORGE_ENV=production` and `path` does not exactly match a bundled sample project.
 
 Workflow: validates and resolves the path within the configured root, assigns a stable project ID from the relative path, stores the project in memory, and returns a client-safe reference.
 
@@ -321,7 +321,7 @@ Investigation results may report `truncated: true` when the Meta Muse context om
 Returns `[{path, name, description}]` for bundled sample projects present under the workspace root.
 
 ### POST /api/workspace/projects/upload
-Body: raw `.zip` bytes (`Content-Type: application/zip`, filename in `x-file-name`). Extracts safely inside the workspace root (no `..`/absolute paths, sensitive files skipped, 10 MB limit), unwraps a single top folder, registers and returns `ProjectReference`. Project code is never executed. Errors: `400` invalid/oversized zip.
+Body: raw `.zip` bytes (`Content-Type: application/zip`, filename in `x-file-name`; the browser builds this zip from a user-picked folder — folder upload is the only UI upload). Extracts safely inside the workspace root (no `..`/absolute paths, sensitive files and `.DS_Store` skipped, 10 MB limit), unwraps a single top folder, registers and returns `ProjectReference`. Before extracting, upload directories older than `FORGE_UPLOAD_TTL_HOURS` (default 6) matching `<stem>-<8 hex>` are deleted; samples and hidden files are never deleted. Project code is never executed. Errors: `400` invalid/oversized zip.
 
 ### GET /api/workspace/projects/{project_id}/files/content?path=<relative>
 Returns `{project_id, path, content, sha256, language}` via the workspace service containment checks. Errors: `404` unknown project/file, `400` invalid path or sensitive file.
@@ -346,3 +346,6 @@ Requires approved; sha256 must match `expected_source_hash` (`409` otherwise). A
 Restores the original only if the current hash equals the applied hash (`409` otherwise).
 
 CORS origins: `FORGE_CORS_ORIGINS` (comma-separated), defaulting to the two local Vite origins.
+
+
+Production (`FORGE_ENV=production`): `POST /api/security/proposals/{id}/apply` and `/rollback` return `403 Disabled in hosted demo`; AI investigation/fix-proposal endpoints return `429` above 10 requests/hour per IP. A project removed from memory by a restart is recovered from disk by its deterministic id on next lookup.

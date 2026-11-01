@@ -28,7 +28,7 @@ export function StackSection() {
                 this page — no hardcoded success. Start the backend and watch it flip.
               </p>
               <pre className="mt-4 overflow-x-auto rounded-sm bg-coal p-3 font-mono text-[11.5px] text-zinc-300">
-                <code>cd backend &amp;&amp; uvicorn app.main:app --reload --port 8000</code>
+                <code>cd backend &amp;&amp; uvicorn app.main:app --reload --reload-dir app --port 8000</code>
               </pre>
             </div>
           </Reveal>

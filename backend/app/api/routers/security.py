@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.config import is_production
+
 from app.schemas.security import (
     AnalysisOutcome,
     AnalysisStatus,
@@ -132,6 +134,8 @@ def review_security_fix_proposal(
     response_model=FixApplicationResponse,
 )
 def apply_security_fix_proposal(proposal_id: str) -> FixApplicationResponse:
+    if is_production():
+        raise HTTPException(status_code=403, detail="Disabled in hosted demo")
     try:
         return apply_fix_proposal(proposal_id)
     except FixWorkflowError as error:
@@ -144,6 +148,8 @@ def apply_security_fix_proposal(proposal_id: str) -> FixApplicationResponse:
     response_model=FixApplicationResponse,
 )
 def rollback_security_fix_proposal(proposal_id: str) -> FixApplicationResponse:
+    if is_production():
+        raise HTTPException(status_code=403, detail="Disabled in hosted demo")
     try:
         return rollback_fix_proposal(proposal_id)
     except FixWorkflowError as error:

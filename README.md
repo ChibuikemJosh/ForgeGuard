@@ -91,7 +91,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Create `backend/app/.env` with:
+Create `backend/.env` with:
 
 ```text
 META_MODEL_API_KEY=<your-key>
@@ -104,13 +104,16 @@ META_MODEL_NAME=muse-spark-1.3
 META_MODEL_BASE_URL=https://api.meta.ai/v1
 FORGE_WORKSPACE_ROOT=<workspace-root>
 FORGE_MAX_FILE_SIZE_BYTES=1048576
+FORGE_CORS_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 ```
 
 Run the backend:
 
 ```powershell
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8000
 ```
+
+`--reload-dir app` prevents uploaded projects in `workspaces/` from restarting the server.
 
 Run tests:
 
@@ -154,3 +157,75 @@ npm run dev
 - Bisal owns the reusable Meta model tool.
 - Kenny owns the React visualiser and workspace UI.
 - The backend owns schemas, workspace, indexing, graph construction, investigation, evidence validation, and controlled operations.
+
+Project Investigation uses the Meta Model API (Muse) from the backend only.
+AI fix proposals require human approval before application; rollback is supported.
+No database, Redis, or production authentication infrastructure is implemented.
+
+## Project Investigation (local testing)
+
+Workflow: Select project (SourceGraph builds automatically) → Select rule → Run AI
+investigation (Meta Muse model) → View findings → Explore graph → AI-assisted
+fix → Review → Apply / Rollback. AI findings are shown as **Potential** (the
+backend status verbatim), never Confirmed.
+
+Meta Model API config (`backend/.env`, never in the frontend):
+
+```bash
+cp .env.example .env   # then put the real META_MODEL_API_KEY in .env
+# META_MODEL_BASE_URL=https://api.meta.ai/v1
+# META_MODEL_NAME=muse-spark-1.3   # optional preview: muse-wonder-1.0
+```
+
+### Run locally (macOS / zsh)
+
+```bash
+# backend
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # then put the real META_MODEL_API_KEY in .env
+pytest
+uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8000
+
+# frontend (new terminal)
+cd frontend && npm install && npm run dev   # http://localhost:5173/workspace
+```
+
+Note: `--reload-dir app` prevents uploaded projects in `workspaces/` from restarting the server (it also stops applying a fix inside `backend/workspaces/` from wiping in-memory state).
+CORS origins can be overridden with `FORGE_CORS_ORIGINS` (comma-separated).
+
+The bundled sample project lives at `backend/workspaces/orders-api/`; use the
+**Use sample project: Orders API** button in the workspace picker. You can also upload a project
+folder from the same picker (folders are zipped in the browser,
+skipping `.git`/`node_modules`/venvs/`.env`; the zip is extracted safely on the backend,
+sensitive files are skipped, code is parsed with `ast` and never executed).
+Reset the sample after applying fixes:
+
+```bash
+git checkout backend/workspaces/orders-api
+```
+
+### Curl smoke test
+
+```bash
+PID=$(curl -s -X POST localhost:8000/api/workspace/projects -H 'Content-Type: application/json' -d '{"path":"orders-api"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["project_id"])')
+curl -s localhost:8000/api/workspace/projects/$PID/source-graph | python3 -m json.tool | head -40
+curl -s -X POST localhost:8000/api/workspace/projects/$PID/investigate -H 'Content-Type: application/json' \
+  -d '{"rule":{"rule_id":"order-ownership-authorization","title":"Customers may only access their own orders","invariant":"The authenticated customer ID must be compared with the order owner before the order is returned."}}' | python3 -m json.tool
+```
+
+Expected (real Muse): status `completed` with evidence in `routes/orders.py`
+and nothing in `routes/profile.py`. Without a key, status `failed` with
+"AI provider is not configured", and the UI shows that message verbatim.
+
+
+## Deploying (hackathon)
+
+No authentication by design. Projects are lost on browser refresh or backend restart; uploaded code is sent to the Meta model API for investigation. Folder uploads only (max 10 MB after skipping ignored folders; files over 1 MB are skipped).
+
+- **Backend (Render / Railway, native Python service):** root directory `backend/`, build command `pip install -r requirements.txt`, start command
+  `uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
+  (no `--reload`, no extra workers; `--proxy-headers` lets the per-IP rate limit see real client IPs behind the host's proxy). Set `META_MODEL_API_KEY`, `META_MODEL_BASE_URL`, `META_MODEL_NAME`, `FORGE_ENV=production`, and `FORGE_CORS_ORIGINS=https://<frontend-domain>`. Run a **single instance** (state is in memory).
+- **Frontend (Vercel / Netlify):** root directory `frontend/`, build command `npm run build`, output `dist`; set `VITE_API_BASE_URL=https://<backend-domain>` at build time.
+- In production only sample projects can be opened by path, the legacy security demo apply/rollback are disabled, and AI endpoints are rate-limited per IP (10/hour).

@@ -31,8 +31,8 @@ SYSTEM_INSTRUCTIONS_PATH = Path(__file__).with_name(
 )
 DEFAULT_MODEL = "muse-spark-1.3"
 DEFAULT_BASE_URL = "https://api.meta.ai/v1"
-MAX_FILES = 50
-MAX_TOTAL_CHARS = 200_000
+DEFAULT_MAX_FILES = 100
+DEFAULT_MAX_TOTAL_CHARS = 400_000
 SKIPPED_DIR_NAMES = {
     ".git",
     ".hg",
@@ -47,6 +47,20 @@ Respond with ONLY a JSON object, no other text:
 {"violations": [{"filename": "<project-relative path>", "linenumber": <1-based line number>}]}
 Example: {"violations": [{"filename": "orders/views.py", "linenumber": 42}]}
 If the violation is not present, respond with: {"violations": []}"""
+
+
+def _investigation_limits() -> tuple[int, int]:
+    """Max Python files and total source chars sent to the model per investigation."""
+    try:
+        max_files = int(os.environ.get("FORGE_INVESTIGATION_MAX_FILES", str(DEFAULT_MAX_FILES)))
+    except ValueError:
+        max_files = DEFAULT_MAX_FILES
+    try:
+        max_chars = int(os.environ.get("FORGE_INVESTIGATION_MAX_CHARS", str(DEFAULT_MAX_TOTAL_CHARS)))
+    except ValueError:
+        max_chars = DEFAULT_MAX_TOTAL_CHARS
+    return max(1, max_files), max(1, max_chars)
+
 
 STRUCTURED_OUTPUT_FORMAT = {
     "type": "json_schema",
@@ -124,20 +138,24 @@ def _is_visible(path: Path, root: Path) -> bool:
 
 def _collect_python_files(folder: Path) -> tuple[list[tuple[str, str]], bool]:
     """Return [(relative path, content)] for Python files, plus truncated flag."""
+    keywords = ("route", "api", "view", "controller", "endpoint", "service", "auth", "handler", "model")
     candidates = sorted(
-        p
-        for p in folder.rglob("*.py")
-        if p.is_file() and _is_visible(p, folder)
+        (p for p in folder.rglob("*.py") if p.is_file() and _is_visible(p, folder)),
+        key=lambda p: (
+            0 if any(k in p.relative_to(folder).as_posix().lower() for k in keywords) else 1,
+            p.relative_to(folder).as_posix().lower(),
+        ),
     )
+    max_files, max_total_chars = _investigation_limits()
     collected: list[tuple[str, str]] = []
     total_chars = 0
-    truncated = len(candidates) > MAX_FILES
-    for path in candidates[:MAX_FILES]:
+    truncated = len(candidates) > max_files
+    for path in candidates[:max_files]:
         try:
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if total_chars + len(content) > MAX_TOTAL_CHARS:
+        if total_chars + len(content) > max_total_chars:
             truncated = True
             break
         collected.append((path.relative_to(folder).as_posix(), content))
@@ -218,7 +236,7 @@ class ViolationsFinderAgent:
             model=self._model,
             base_url=self._base_url,
             api_key=SecretStr(api_key),
-            timeout=60.0,
+            timeout=90.0,
         )
         try:
             invoke_client = client.bind(response_format=STRUCTURED_OUTPUT_FORMAT)

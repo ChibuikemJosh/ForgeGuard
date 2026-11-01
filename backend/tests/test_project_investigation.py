@@ -204,3 +204,85 @@ def test_upload_zip_then_investigate(client_env, monkeypatch):
     # uploaded project registered on same service; investigator uses that service
     inv = client.post(f"/api/workspace/projects/{pid}/investigate", json={"rule": {"rule_id": "r", "title": "T", "invariant": "I"}})
     assert inv.status_code == 200 and inv.json()["findings"][0]["status"] == "potential"
+
+
+def _zip_bytes(files):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, content in files.items():
+            z.writestr(name, content)
+    return buf.getvalue()
+
+
+def _upload(client, files, name="myproj.zip"):
+    return client.post("/api/workspace/projects/upload", content=_zip_bytes(files),
+                       headers={"x-file-name": name, "content-type": "application/zip"})
+
+
+def test_recovery_after_restart(client_env):
+    client, service, _ = client_env
+    r = _upload(client, {"app.py": "def foo():\n    return 1\n"})
+    assert r.status_code == 200, r.text
+    pid = r.json()["project_id"]
+    fresh = WorkspaceService(service.root)  # simulate restart: empty registry
+    assert fresh.get_project(pid).project_id == pid
+    assert fresh.project_root(pid).is_dir()
+    from app.services.project_workspace import WorkspaceError
+    with pytest.raises(WorkspaceError):
+        fresh.get_project("project-000000000000")
+
+
+def test_upload_syntax_error_graph_still_200(client_env):
+    client, _, _ = client_env
+    r = _upload(client, {"good.py": "def ok():\n    return 1\n", "bad.py": 'print "x"\n'}, "mixed.zip")
+    assert r.status_code == 200, r.text
+    pid = r.json()["project_id"]
+    graph = client.get(f"/api/workspace/projects/{pid}/source-graph")
+    assert graph.status_code == 200
+    assert any(n.get("file_path") == "good.py" or n.get("name") == "ok" for n in graph.json()["nodes"])
+
+
+def test_upload_ds_store_skipped(client_env):
+    client, _, _ = client_env
+    r = _upload(client, {"myproj/app.py": "x = 1\n", "myproj/.DS_Store": "junk"}, "ds.zip")
+    assert r.status_code == 200, r.text
+    pid = r.json()["project_id"]
+    m = client.get(f"/api/workspace/projects/{pid}/manifest").json()
+    paths = [f["path"] for f in m["files"]]
+    assert "app.py" in paths and not any(".DS_Store" in p for p in paths)
+
+
+def test_upload_ttl_cleanup(client_env, monkeypatch):
+    client, service, _ = client_env
+    import os as _os, time as _time
+    old = service.root / "oldproj-deadbeef"
+    old.mkdir(); (old / "a.py").write_text("x=1\n")
+    past = _time.time() - 10 * 3600
+    _os.utime(old, (past, past))
+    r = _upload(client, {"app.py": "x = 1\n"}, "newproj.zip")
+    assert r.status_code == 200, r.text
+    assert not old.exists()
+    assert (service.root / "orders-api").is_dir()
+
+
+def test_open_project_forbidden_in_production(client_env, monkeypatch):
+    client, _, _ = client_env
+    monkeypatch.setenv("FORGE_ENV", "production")
+    assert client.post("/api/workspace/projects", json={"path": "."}).status_code == 403
+    assert client.post("/api/workspace/projects", json={"path": "orders-api"}).status_code == 200
+
+
+def test_security_apply_disabled_in_production(client_env, monkeypatch):
+    client, _, _ = client_env
+    monkeypatch.setenv("FORGE_ENV", "production")
+    assert client.post("/api/security/proposals/whatever/apply").status_code == 403
+    assert client.post("/api/security/proposals/whatever/rollback").status_code == 403
+
+
+def test_collect_python_files_prioritises_relevant(tmp_path):
+    from app.services.violations_finder_agent import _collect_python_files
+    (tmp_path / "zzz_util.py").write_text("x=1\n")
+    (tmp_path / "aaa_misc.py").write_text("x=1\n")
+    sub = tmp_path / "routes"; sub.mkdir(); (sub / "orders.py").write_text("x=1\n")
+    files, _ = _collect_python_files(tmp_path)
+    assert files[0][0] == "routes/orders.py"

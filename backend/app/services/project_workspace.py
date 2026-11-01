@@ -119,14 +119,30 @@ class WorkspaceService:
         self._project_paths[project_id] = resolved
         return reference
 
-    def get_project(self, project_id: str) -> ProjectReference:
+    def _recover(self, project_id: str) -> bool:
+        """Re-register a top-level project dir whose deterministic id matches."""
         try:
-            return self._projects[project_id]
-        except KeyError as error:
-            raise WorkspaceError("Unknown project.") from error
+            entries = sorted(self.root.iterdir())
+        except OSError:
+            return False
+        for entry in entries:
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            if self._project_id(entry.name) == project_id:
+                try:
+                    self.register_project(entry.name)
+                except WorkspaceError:
+                    return False
+                return True
+        return False
+
+    def get_project(self, project_id: str) -> ProjectReference:
+        if project_id not in self._projects and not self._recover(project_id):
+            raise WorkspaceError("Unknown project.")
+        return self._projects[project_id]
 
     def project_root(self, project_id: str) -> Path:
-        if project_id not in self._project_paths:
+        if project_id not in self._project_paths and not self._recover(project_id):
             raise WorkspaceError("Unknown project.")
         return self._project_paths[project_id]
 

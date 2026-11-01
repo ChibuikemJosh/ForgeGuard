@@ -25,8 +25,7 @@ npm run lint         # oxlint (config: .oxlintrc.json)
 npm run preview      # preview production build
 ```
 
-Backend (separate process, from `../backend/`): `uvicorn app.main:app
---reload --host 127.0.0.1 --port 8000` — API at `http://127.0.0.1:8000`,
+Backend (separate process, from `../backend/`): `uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8000` — API at `http://127.0.0.1:8000`,
 docs at `/docs`. The frontend alone shows "Backend unreachable"; that is
 honest, not a bug.
 
@@ -161,7 +160,7 @@ exist, the frontend just no longer calls them).
 
 ```
 src/hooks/useProjectWorkflow.ts   # useReducer machine; opening a project
-                                  # (sample, folder or .zip upload) auto-fetches
+                                  # (sample or folder upload) auto-fetches
                                   # manifest then SourceGraph — no Analyze click
 src/features/project/
 ├── types.ts                      # Project/manifest/SourceGraph/investigation types (+ ApiLogEntry)
@@ -176,7 +175,7 @@ src/components/workspace/
 ├── ResizeHandle.tsx              # Panel sashes (shared)
 ├── shared/                       # DiffViewer, DiffCompare, ShikiLines, PlainLines
 └── project/
-    ├── ProjectPicker.tsx         # Sample button + "Upload project folder" + "Upload .zip project"
+    ├── ProjectPicker.tsx         # Sample button + "Upload project folder"
     ├── ProjectExplorer.tsx       # Overview-style tree (react-icons, badges) from the manifest
     ├── ExplorerTree.tsx          # TreeRow + FileIcon
     ├── SourceGraphCanvas.tsx     # 3-level drill-down canvas (see below)

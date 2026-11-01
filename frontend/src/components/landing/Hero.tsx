@@ -3,8 +3,8 @@ import { ForgeGraph } from "./ForgeGraph";
 import { EASE_OUT, lineReveal } from "./motion";
 
 const STATS = [
-  { label: "EDGES", value: "3 typed" },
-  { label: "LANGUAGE", value: "Python" },
+  { label: "LANGUAGE", value: "Python only" },
+  { label: "FINDINGS", value: "Evidence-gated" },
   { label: "AI CHANGES", value: "Approve-first" },
 ] as const;
 
@@ -25,18 +25,18 @@ export function Hero() {
               transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
               aria-hidden
             />
-            VISUAL DEV ENVIRONMENT — HACKATHON BUILD
+            AI SECURITY INVESTIGATION — NO-AUTH HACKATHON DEMO
           </motion.p>
 
           <h1 className="mt-5 font-display text-[44px] font-light leading-[1.05] tracking-[-0.035em] text-zinc-50 sm:text-[64px]">
             <span className="block overflow-hidden pb-1">
               <motion.span className="block" variants={lineReveal} custom={1.6} initial="hidden" animate="visible">
-                Code you can see.
+                Upload code.
               </motion.span>
             </span>
             <span className="block overflow-hidden pb-1">
               <motion.span className="block text-zinc-400" variants={lineReveal} custom={1.72} initial="hidden" animate="visible">
-                AI you can control.
+                Find real auth bugs.
               </motion.span>
             </span>
           </h1>
@@ -47,8 +47,9 @@ export function Hero() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 1.9, duration: 0.6, ease: EASE_OUT }}
           >
-            Forge pairs a code editor with a live, node-based view of your architecture. Every node is a real
-            component — so AI-assisted changes stay structured, understandable and reviewable.
+            Forge Guard turns a Python folder into a SourceGraph, then Meta Muse checks it against rules
+            like “customers may only access their own orders”. Findings are potential, evidence-validated,
+            and fixes need your approval before anything is written.
           </motion.p>
 
           <motion.div
@@ -58,20 +59,20 @@ export function Hero() {
             transition={{ delay: 2.02, duration: 0.6, ease: EASE_OUT }}
           >
             <motion.a
-              href="#workflow"
+              href="/workspace"
               className="rounded-sm bg-ember px-5 py-3 text-[15px] font-bold text-white hover:bg-ember-soft focus-visible:outline-2 focus-visible:outline-white"
               whileHover={{ y: -2 }}
               whileTap={{ scale: 0.98 }}
             >
-              See how it works
+              Try the live workspace
             </motion.a>
             <motion.a
-              href="#model"
+              href="#how-it-works"
               className="rounded-sm border border-line bg-panel px-5 py-3 text-[15px] font-bold text-zinc-100 hover:border-zinc-500 focus-visible:outline-2 focus-visible:outline-ember"
               whileHover={{ y: -2 }}
               whileTap={{ scale: 0.98 }}
             >
-              Explore the model
+              See how it works
             </motion.a>
           </motion.div>
 
@@ -98,7 +99,7 @@ export function Hero() {
         >
           <ForgeGraph />
           <p className="mt-3 font-mono text-[11px] leading-relaxed text-zinc-500">
-            ↑ A real slice of this repo — health endpoint, schema, service and its test — as Forge nodes.
+            ↑ A real slice of this repo — health endpoint, schema, service and its test — as Forge nodes. Your project gets the same treatment, at folder / file / function level.
           </p>
         </motion.div>
       </div>

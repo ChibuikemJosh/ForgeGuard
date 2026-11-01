@@ -74,7 +74,7 @@ Implemented today:
 
 The backend does not treat AI-generated locations as confirmed vulnerabilities. Missing or invalid evidence yields `inconclusive` or `unsupported` findings.
 
-Ram's agent is a LangGraph/LangChain wrapper around a Meta Model compatible API. It is not a second orchestrator in this backend; the backend calls it as an investigation component.
+Ram's agent is a LangGraph/LangChain wrapper around the Meta Model API (Muse, default `muse-spark-1.3`). It is not a second orchestrator in this backend; the backend calls it as an investigation component.
 
 ## Agent integration
 
@@ -90,7 +90,7 @@ Implemented capabilities:
 - Atomic writes and rollback.
 - Controlled HTTP verification with actual outcomes.
 
-General arbitrary file creation and command execution are not implemented.
+General arbitrary file creation and command execution are not implemented. Project fix proposals (`project_fix_proposals.py`) are separate from the controlled demo: Muse returns a full corrected file, the backend validates `ast.parse`, a human must approve, application is hash-checked and atomic, and rollback restores the original. Uploaded/sample project code is never executed, only parsed.
 
 ## Service responsibilities
 

@@ -84,6 +84,14 @@ def analyze_security_demo(
     )
 
 
+@router.get("/rules")
+def list_security_rules():
+    """Return preset SecurityRule objects for project investigation."""
+    from app.services.project_rules import RULE_PRESETS
+
+    return RULE_PRESETS
+
+
 @router.get("/rules/order-ownership")
 def get_order_ownership_rule():
     """Return the stable MVP rule definition."""

@@ -11,7 +11,7 @@ export interface HealthResponse {
 }
 
 import type { Graph, GraphPreviewResponse, ValidationResult } from '../../features/graph/types'
-import type { DemoOrderResult, FixApplicationResponse, FixProposal, ReviewDecisionRequest, ReviewDecisionRecord, SecurityAnalysisResponse } from '../../features/security/types'
+import type { FileContentResponse, InvestigationResult, ProjectFixProposal, ProjectManifest, ProjectReference, SampleProject, SecurityRule as ProjectSecurityRule, SourceGraph } from '../../features/project/types'
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000'
 
@@ -57,40 +57,22 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function apiUrl(path: string): string { return `${apiBaseUrl}${path}` }
 
-export async function analyzeSecurity(opts?: { corrected?: boolean; verify?: boolean; signal?: AbortSignal }): Promise<SecurityAnalysisResponse> {
-  const q = new URLSearchParams()
-  if (opts?.corrected) q.set("corrected", "true")
-  if (opts?.verify === false) q.set("verify", "false")
-  const qs = q.toString()
-  return requestJson<SecurityAnalysisResponse>(`/api/security/analyze${qs ? `?${qs}` : ""}`, { method: "POST", signal: opts?.signal })
+const jsonInit = (method: string, body?: unknown, signal?: AbortSignal): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal });
+export async function listSamples(signal?: AbortSignal): Promise<SampleProject[]> { return requestJson<SampleProject[]>("/api/workspace/samples", { signal }); }
+export async function openProject(path: string, name?: string, signal?: AbortSignal): Promise<ProjectReference> { return requestJson<ProjectReference>("/api/workspace/projects", jsonInit("POST", { path, name: name ?? null }, signal)); }
+export async function uploadProjectZip(file: File, signal?: AbortSignal): Promise<ProjectReference> {
+  return requestJson<ProjectReference>("/api/workspace/projects/upload", { method: "POST", headers: { "Content-Type": "application/zip", "x-file-name": file.name }, body: file, signal });
 }
-export async function getProposal(id: string, signal?: AbortSignal): Promise<FixProposal> {
-  return requestJson<FixProposal>(`/api/security/proposals/${encodeURIComponent(id)}`, { signal })
-}
-export async function reviewProposal(id: string, body: ReviewDecisionRequest, signal?: AbortSignal): Promise<ReviewDecisionRecord> {
-  return requestJson<ReviewDecisionRecord>(`/api/security/proposals/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal })
-}
-export async function applyProposal(id: string, signal?: AbortSignal): Promise<FixApplicationResponse> {
-  return requestJson<FixApplicationResponse>(`/api/security/proposals/${encodeURIComponent(id)}/apply`, { method: "POST", signal })
-}
-export async function rollbackProposal(id: string, signal?: AbortSignal): Promise<FixApplicationResponse> {
-  return requestJson<FixApplicationResponse>(`/api/security/proposals/${encodeURIComponent(id)}/rollback`, { method: "POST", signal })
-}
-/** Must not throw on 4xx — 403 is a meaningful result. */
-export async function tryDemoOrder(state: "vulnerable" | "corrected", orderId: string, customerId: string, signal?: AbortSignal): Promise<DemoOrderResult> {
-  const started = performance.now()
-  const url = `${apiBaseUrl}/api/demo/${state}/orders/${encodeURIComponent(orderId)}`
-  let response: Response
-  try {
-    response = await fetch(url, { headers: { Accept: "application/json", "x-customer-id": customerId }, signal })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error
-    throw new Error(`Request failed: could not reach the Forge backend at ${url}`, { cause: error })
-  }
-  let body: unknown = null
-  try { body = await response.json() } catch { body = null }
-  return { status: response.status, body, durationMs: Math.round(performance.now() - started) }
-}
+export async function getManifest(id: string, signal?: AbortSignal): Promise<ProjectManifest> { return requestJson<ProjectManifest>(`/api/workspace/projects/${encodeURIComponent(id)}/manifest`, { signal }); }
+export async function getSourceGraph(id: string, signal?: AbortSignal): Promise<SourceGraph> { return requestJson<SourceGraph>(`/api/workspace/projects/${encodeURIComponent(id)}/source-graph`, { signal }); }
+export async function getFileContent(id: string, path: string, signal?: AbortSignal): Promise<FileContentResponse> { return requestJson<FileContentResponse>(`/api/workspace/projects/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(path)}`, { signal }); }
+export async function listRules(signal?: AbortSignal): Promise<ProjectSecurityRule[]> { return requestJson<ProjectSecurityRule[]>("/api/security/rules", { signal }); }
+export async function investigateProject(id: string, rule: ProjectSecurityRule, signal?: AbortSignal): Promise<InvestigationResult> { return requestJson<InvestigationResult>(`/api/workspace/projects/${encodeURIComponent(id)}/investigate`, jsonInit("POST", { rule }, signal)); }
+export async function createFixProposal(id: string, findingId: string, instructions?: string, signal?: AbortSignal): Promise<ProjectFixProposal> { return requestJson<ProjectFixProposal>(`/api/workspace/projects/${encodeURIComponent(id)}/findings/${encodeURIComponent(findingId)}/fix-proposals`, jsonInit("POST", { instructions: instructions ?? null }, signal)); }
+export async function getProjectFixProposal(pid: string, signal?: AbortSignal): Promise<ProjectFixProposal> { return requestJson<ProjectFixProposal>(`/api/workspace/fix-proposals/${encodeURIComponent(pid)}`, { signal }); }
+export async function reviewProjectFixProposal(pid: string, body: { decision: "approved" | "rejected"; reviewer: string; actor: "human"; reason?: string }, signal?: AbortSignal): Promise<ProjectFixProposal> { return requestJson<ProjectFixProposal>(`/api/workspace/fix-proposals/${encodeURIComponent(pid)}/review`, jsonInit("POST", body, signal)); }
+export async function applyProjectFixProposal(pid: string, signal?: AbortSignal): Promise<ProjectFixProposal> { return requestJson<ProjectFixProposal>(`/api/workspace/fix-proposals/${encodeURIComponent(pid)}/apply`, jsonInit("POST", undefined, signal)); }
+export async function rollbackProjectFixProposal(pid: string, signal?: AbortSignal): Promise<ProjectFixProposal> { return requestJson<ProjectFixProposal>(`/api/workspace/fix-proposals/${encodeURIComponent(pid)}/rollback`, jsonInit("POST", undefined, signal)); }
 
 export async function fetchBackendHealth(
   signal?: AbortSignal,

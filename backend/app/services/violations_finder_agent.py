@@ -24,7 +24,7 @@ from pydantic import SecretStr
 from app.schemas.chat import ChatLocation
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 SYSTEM_INSTRUCTIONS_PATH = Path(__file__).with_name(
     "system_instructions_validatoragent.md"
@@ -43,10 +43,60 @@ SKIPPED_DIR_NAMES = {
 }
 
 RESPONSE_FORMAT = """# Response format
-Respond with ONLY a JSON array, no other text. Each element must have exactly:
-{"filename": "<project-relative path>", "linenumber": <1-based line number>}
-Example: [{"filename": "orders/views.py", "linenumber": 42}]
-If the violation is not present, respond with: []"""
+Respond with ONLY a JSON object, no other text:
+{"violations": [{"filename": "<project-relative path>", "linenumber": <1-based line number>}]}
+Example: {"violations": [{"filename": "orders/views.py", "linenumber": 42}]}
+If the violation is not present, respond with: {"violations": []}"""
+
+STRUCTURED_OUTPUT_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "violations",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "violations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {"type": "string"},
+                            "linenumber": {"type": "integer"},
+                        },
+                        "required": ["filename", "linenumber"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["violations"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def _extract_text(content: Any) -> str:
+    """Extract text from a string or a list of model content blocks."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") in (None, "text") and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+            else:
+                text = getattr(block, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    text = getattr(content, "text", None)
+    return text if isinstance(text, str) else str(content)
 
 
 class AgentConfigurationError(RuntimeError):
@@ -151,6 +201,8 @@ class ViolationsFinderAgent:
         )
         self._graph = None
         self._graph_key: str | None = None
+        self.last_truncated = False
+        self.last_file_count = 0
 
     @staticmethod
     def _api_key() -> str:
@@ -162,36 +214,39 @@ class ViolationsFinderAgent:
         return f"{instructions}\n\n{RESPONSE_FORMAT}"
 
     def _build_graph(self, api_key: str):
-
-        if api_key is not None:
-            client = ChatOpenAI(
-                model=self._model,
-                base_url=self._base_url,
-                api_key=SecretStr(api_key),
-                timeout=60.0,
-            )
-        else:
-            client = None
-        
+        client = ChatOpenAI(
+            model=self._model,
+            base_url=self._base_url,
+            api_key=SecretStr(api_key),
+            timeout=60.0,
+        )
+        try:
+            invoke_client = client.bind(response_format=STRUCTURED_OUTPUT_FORMAT)
+        except Exception:
+            invoke_client = client
         system_prompt = self._system_prompt()
 
         def analyze(state: AgentState) -> dict[str, Any]:
             try:
-                response = client.invoke(
+                response = invoke_client.invoke(
                     [SystemMessage(content=system_prompt)] + state["messages"]
-                ) if client is not None else None
-            except Exception as error:
-                raise AgentResponseError(f"Model invocation failed: {error}") from error
-            content = response.content if response else None
-            if content:
-                text = content if isinstance(content, str) else json.dumps(content)
-            else:
-                text = None
-            
-            locations = _parse_locations(text) if text else None
+                )
+            except Exception:
+                # Structured output may be unsupported by a compatible endpoint;
+                # retry once unbound and rely on _parse_locations.
+                try:
+                    response = client.invoke(
+                        [SystemMessage(content=system_prompt)] + state["messages"]
+                    )
+                except Exception as error:
+                    raise AgentResponseError(f"Model invocation failed: {error}") from error
+            text = _extract_text(response.content if response else None)
+            if not text:
+                raise AgentResponseError("Model response contained no text content.")
+            locations = _parse_locations(text)
             return {
                 "messages": [response] if response else [],
-                "locations": [location.model_dump() for location in locations] if locations else [],
+                "locations": [location.model_dump() for location in locations],
             }
 
         graph = StateGraph(AgentState)
@@ -219,6 +274,8 @@ class ViolationsFinderAgent:
                 f"Project folder does not exist: {project_folder}"
             )
         files, truncated = _collect_python_files(folder)
+        self.last_truncated = truncated
+        self.last_file_count = len(files)
         if self._graph is None or self._graph_key != api_key:
             self._graph = self._build_graph(api_key)
             self._graph_key = api_key

@@ -48,6 +48,7 @@ class InvestigateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rule: SecurityRule
+    session_id: str | None = None
 
 
 
@@ -120,6 +121,6 @@ def investigate_project(project_id: str, request: InvestigateRequest) -> Investi
         from app.services.source_graph_builder import SourceGraphBuilder
         resolution = SymbolResolver().resolve(index)
         graph = SourceGraphBuilder().build(reference, index, resolution)
-        return _investigator.investigate(reference, index, graph, request.rule)
+        return _investigator.investigate(reference, index, graph, request.rule, session_id=request.session_id)
     except WorkspaceError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

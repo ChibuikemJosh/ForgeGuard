@@ -54,6 +54,7 @@ class SecurityInvestigationService:
                 status=InvestigationStatus.FAILED,
                 errors=[str(error)],
                 summary="Investigation could not run because the AI provider is not configured.",
+                truncated=getattr(agent, "last_truncated", False),
             )
         except ProjectFolderError as error:
             return InvestigationResult(
@@ -62,6 +63,7 @@ class SecurityInvestigationService:
                 rule_id=rule.rule_id,
                 status=InvestigationStatus.FAILED,
                 errors=[str(error)],
+                truncated=getattr(agent, "last_truncated", False),
             )
         except AgentResponseError as error:
             return InvestigationResult(
@@ -71,6 +73,7 @@ class SecurityInvestigationService:
                 status=InvestigationStatus.FAILED,
                 errors=[str(error)],
                 summary="The agent response could not be parsed into locations.",
+                truncated=getattr(agent, "last_truncated", False),
             )
         except Exception as error:
             return InvestigationResult(
@@ -79,9 +82,11 @@ class SecurityInvestigationService:
                 rule_id=rule.rule_id,
                 status=InvestigationStatus.FAILED,
                 errors=[f"Investigation failed: {error}"],
+                truncated=getattr(agent, "last_truncated", False),
             )
 
         locations = locations or []
+        truncated = getattr(agent, "last_truncated", False)
         validator = EvidenceValidator(self.workspace, project.project_id, index, graph)
         evidence_items = []
         affected_files = []
@@ -150,9 +155,11 @@ class SecurityInvestigationService:
             status=status,
             findings=findings,
             errors=errors,
+            truncated=truncated,
             summary=(
                 f"Investigated {len(index.files)} files; agent returned "
                 f"{len(locations)} location(s), {len(valid_items)} validated."
+                + (" Project context was truncated." if truncated else "")
             ),
         )
 

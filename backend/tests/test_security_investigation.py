@@ -38,6 +38,46 @@ class FakeAgent:
         return self.locations
 
 
+class ContextAgent:
+    def __init__(self, locations):
+        self.locations = locations
+        self.context_files = None
+        self.follow_ups = 0
+
+    def find_violations(
+        self,
+        details,
+        project_folder,
+        session_id,
+        context_files=None,
+        follow_up=False,
+    ):
+        self.context_files = context_files
+        self.follow_ups += int(follow_up)
+        return self.locations
+
+
+class FollowUpAgent(ContextAgent):
+    def __init__(self):
+        super().__init__([])
+
+    def find_violations(
+        self,
+        details,
+        project_folder,
+        session_id,
+        context_files=None,
+        follow_up=False,
+    ):
+        self.context_files = context_files
+        self.follow_ups += int(follow_up)
+        return (
+            [ChatLocation(filename="m.py", linenumber=1)]
+            if follow_up
+            else []
+        )
+
+
 def test_investigation_with_valid_agent_location(tmp_path):
     service, ref = _workspace(tmp_path, {"m.py": "def foo():\n    return 1\n"})
     index, graph = _index_graph(service, ref)
@@ -179,6 +219,51 @@ def test_investigation_maps_class_locations_to_graph_nodes(tmp_path):
     assert result.findings[0].affected_symbols == [class_id]
     assert result.findings[0].related_graph_nodes[0] == class_id
     assert result.findings[0].evidence[0].node_matches[0].node_id == class_id
+
+
+def test_investigation_plans_graph_context_and_deduplicates_locations(tmp_path):
+    service, ref = _workspace(
+        tmp_path,
+        {
+            "routes/orders.py": "def get_order():\n    return 1\n",
+            "unrelated.py": "def unrelated():\n    return 2\n",
+        },
+    )
+    index, graph = _index_graph(service, ref)
+    rule = SecurityRule(
+        rule_id="order-rule",
+        title="Order ownership",
+        invariant="Orders must belong to the current customer.",
+    )
+    agent = ContextAgent(
+        [
+            ChatLocation(filename="routes/orders.py", linenumber=1),
+            ChatLocation(filename="routes/orders.py", linenumber=1),
+        ]
+    )
+
+    result = SecurityInvestigationService(service, agent=agent).investigate(
+        ref, index, graph, rule
+    )
+
+    assert agent.context_files == {"routes/orders.py"}
+    assert result.findings[0].evidence[0].file_path == "routes/orders.py"
+    assert len(result.findings[0].evidence) == 1
+    assert agent.follow_ups == 0
+
+
+def test_investigation_uses_one_bounded_follow_up(tmp_path):
+    service, ref = _workspace(tmp_path, {"m.py": "def foo():\n    return 1\n"})
+    index, graph = _index_graph(service, ref)
+    agent = FollowUpAgent()
+    rule = SecurityRule(rule_id="r", title="R", invariant="I")
+
+    result = SecurityInvestigationService(service, agent=agent).investigate(
+        ref, index, graph, rule
+    )
+
+    assert result.status.value == "completed"
+    assert agent.follow_ups == 1
 
 
 def test_investigate_endpoint(monkeypatch, tmp_path):

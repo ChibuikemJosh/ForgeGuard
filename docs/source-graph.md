@@ -106,3 +106,56 @@ The backend computes node matches for each validated evidence location with the 
 - Edges use `source` and `target`; edges with `target: null` should be rendered as unresolved observations (for example dashed) or shown in an inspector instead of as connected edges.
 - Source details can be fetched with existing workspace endpoints (`/api/workspace/projects/{project_id}/files` and `/api/workspace/projects/{project_id}/manifest`); the graph response intentionally omits file contents.
 - This schema is separate from the existing Function `Graph` schema used by `/api/graph/*`. Do not assume the same node shape.
+
+## Investigation node lookup contract
+
+Backend service function:
+
+```python
+get_nodes_on_path_python(
+    project_id: str,
+    file_path: str,
+    line_number: int,
+) -> list[SourceGraphNodeMatch]
+```
+
+The backend router function delegates to
+`SourceGraphNodeLookup(workspace_service)`. The lookup validates the project,
+normalizes Windows and POSIX separators,
+requires a positive 1-based line number, and matches the exact project-relative
+path. It rebuilds the existing index, resolution result, and SourceGraph; it
+does not accept a caller-supplied graph.
+
+Each result contains:
+
+```json
+{
+  "node_id": "project-abc123:services.orders:OrderService.get_order",
+  "node_type": "method",
+  "name": "get_order",
+  "qualified_name": "OrderService.get_order",
+  "file_path": "services/orders.py",
+  "start_line": 2,
+  "end_line": 3,
+  "parent_node_id": "..."
+}
+```
+
+Results use actual SourceGraph node IDs and include matching symbols plus
+relevant containing class/module nodes. Missing projects, invalid paths, and
+invalid line numbers raise `SourceGraphLookupError`; a valid file and line with
+no matching indexed node returns an empty list.
+
+Ram's tool should expose the logical contract:
+
+```text
+Tool: get_nodes_on_path_python
+Inputs: project_id (string), file_path (string), line_number (integer)
+Output: list of SourceGraphNodeMatch objects
+```
+
+The agent should call it once per evidence location after backend evidence
+validation. The agent must use the active investigation's project ID and must
+not accept arbitrary project IDs from untrusted model output. Kenny's frontend
+can highlight `node_id` values through the existing `related_graph_nodes`
+finding field.

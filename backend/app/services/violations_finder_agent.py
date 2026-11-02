@@ -5,6 +5,11 @@ custom violation details plus the Python files of the project folder to the
 Meta Model API and parses the returned violations into filename/line pairs.
 Per-session context is retained via a LangGraph checkpointer keyed by the
 caller-provided session identifier.
+
+After analysis, an ``enrich`` step invokes one related-nodes LangGraph tool
+per location (selected by the file's programming language) and attaches the
+resulting SourceGraph nodes as ``relatednodes``. The ``project_id`` scoping
+those tools travels through the LangGraph state from the chat request.
 """
 
 from __future__ import annotations
@@ -16,12 +21,18 @@ from typing import Any
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, MessagesState, StateGraph
 from pydantic import SecretStr
 
 from app.schemas.chat import ChatLocation
+from app.services.project_workspace import WorkspaceError, WorkspaceService
+from app.services.source_graph_tools import (
+    build_related_nodes_tools,
+    related_nodes_for_location,
+)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -127,6 +138,7 @@ class AgentResponseError(RuntimeError):
 
 class AgentState(MessagesState):
     locations: list[dict[str, Any]]
+    project_id: str | None
 
 
 def _is_visible(path: Path, root: Path) -> bool:
@@ -136,11 +148,23 @@ def _is_visible(path: Path, root: Path) -> bool:
     )
 
 
-def _collect_python_files(folder: Path) -> tuple[list[tuple[str, str]], bool]:
+def _collect_python_files(
+    folder: Path,
+    allowed_paths: set[str] | None = None,
+) -> tuple[list[tuple[str, str]], bool]:
     """Return [(relative path, content)] for Python files, plus truncated flag."""
     keywords = ("route", "api", "view", "controller", "endpoint", "service", "auth", "handler", "model")
     candidates = sorted(
-        (p for p in folder.rglob("*.py") if p.is_file() and _is_visible(p, folder)),
+        (
+            p
+            for p in folder.rglob("*.py")
+            if p.is_file()
+            and _is_visible(p, folder)
+            and (
+                allowed_paths is None
+                or p.relative_to(folder).as_posix() in allowed_paths
+            )
+        ),
         key=lambda p: (
             0 if any(k in p.relative_to(folder).as_posix().lower() for k in keywords) else 1,
             p.relative_to(folder).as_posix().lower(),
@@ -205,6 +229,35 @@ def _parse_locations(raw: str) -> list[ChatLocation]:
     return locations
 
 
+def _resolve_enrichment_context(
+    project_folder: Path, project_id: str | None
+) -> tuple[WorkspaceService, str]:
+    """Return the workspace and effective project id for related-node lookup.
+
+    A caller-provided id must already be registered (via the workspace APIs)
+    on the shared workspace service; otherwise the project folder itself is
+    registered on an ephemeral workspace scoped to this request.
+    """
+    if project_id:
+        # Local import: the shared workspace lives on the workspace router;
+        # importing it here avoids a module-level services -> router import.
+        from app.api.routers.workspace import workspace_service
+
+        try:
+            workspace_service.get_project(project_id)
+            registered_folder = workspace_service.project_root(project_id)
+        except WorkspaceError as error:
+            raise WorkspaceError(f"Unknown project: {project_id}") from error
+        if project_folder.resolve() != registered_folder:
+            raise WorkspaceError(
+                "Project folder does not match the registered project."
+            )
+        return workspace_service, project_id
+    workspace = WorkspaceService(project_folder)
+    reference = workspace.register_project(".")
+    return workspace, reference.project_id
+
+
 class ViolationsFinderAgent:
     """LangGraph agent finding violation locations via the Meta Model API."""
 
@@ -219,8 +272,11 @@ class ViolationsFinderAgent:
         )
         self._graph = None
         self._graph_key: str | None = None
+        self._checkpointer = MemorySaver()
         self.last_truncated: bool = False
         self.last_files_sent: int = 0
+        self.last_project_id: str | None = None
+        self.last_tool_names: list[str] = []
 
     @staticmethod
     def _api_key() -> str:
@@ -231,7 +287,12 @@ class ViolationsFinderAgent:
         instructions = SYSTEM_INSTRUCTIONS_PATH.read_text(encoding="utf-8")
         return f"{instructions}\n\n{RESPONSE_FORMAT}"
 
-    def _build_graph(self, api_key: str):
+    def _build_graph(
+        self,
+        api_key: str,
+        tools_by_project: dict[str, dict[str, BaseTool]],
+        default_project_id: str,
+    ):
         client = ChatOpenAI(
             model=self._model,
             base_url=self._base_url,
@@ -267,18 +328,47 @@ class ViolationsFinderAgent:
                 "locations": [location.model_dump() for location in locations],
             }
 
+        def enrich(state: AgentState) -> dict[str, Any]:
+            project_id = state.get("project_id") or default_project_id
+            tools = tools_by_project.get(project_id, {})
+            enriched: list[dict[str, Any]] = []
+            for item in state.get("locations") or []:
+                filename = item.get("filename")
+                linenumber = item.get("linenumber")
+                if (
+                    isinstance(filename, str)
+                    and isinstance(linenumber, int)
+                    and not isinstance(linenumber, bool)
+                ):
+                    related = related_nodes_for_location(
+                        tools, filename, linenumber
+                    )
+                else:
+                    related = []
+                enriched.append(
+                    {
+                        **item,
+                        "relatednodes": [node.model_dump() for node in related],
+                    }
+                )
+            return {"locations": enriched}
+
         graph = StateGraph(AgentState)
         graph.add_node("analyze", analyze)
+        graph.add_node("enrich", enrich)
         graph.set_entry_point("analyze")
-        graph.add_edge("analyze", END)
-        return graph.compile(checkpointer=MemorySaver())
+        graph.add_edge("analyze", "enrich")
+        graph.add_edge("enrich", END)
+        return graph.compile(checkpointer=self._checkpointer)
 
     def find_violations(
         self,
         custom_security_violation_details: str,
         project_folder: str,
         session_id: str,
-        callbacks: list | None = None,
+        context_files: set[str] | None = None,
+        follow_up: bool = False,
+        project_id: str | None = None,
     ) -> list[ChatLocation]:
         """Map violation details to source locations for one session."""
         api_key = self._api_key()
@@ -292,15 +382,28 @@ class ViolationsFinderAgent:
             raise ProjectFolderError(
                 f"Project folder does not exist: {project_folder}"
             )
-        files, truncated = _collect_python_files(folder)
+        workspace, effective_project_id = _resolve_enrichment_context(
+            folder, project_id
+        )
+        tools = build_related_nodes_tools(workspace, effective_project_id)
+        self.last_project_id = effective_project_id
+        self.last_tool_names = [tool.name for tool in tools.values()]
+        files, truncated = _collect_python_files(folder, allowed_paths=context_files)
         self.last_truncated = truncated
         self.last_files_sent = len(files)
-        if self._graph is None or self._graph_key != api_key:
-            self._graph = self._build_graph(api_key)
-            self._graph_key = api_key
+        self._graph = self._build_graph(
+            api_key, {effective_project_id: tools}, effective_project_id
+        )
+        self._graph_key = api_key
         parts = [
             "Custom security violation to detect:",
             custom_security_violation_details,
+            (
+                "\nThis is a bounded follow-up analysis. Re-examine the supplied "
+                "context and return only newly supported locations."
+                if follow_up
+                else ""
+            ),
             f"\nPython project at {folder} ({len(files)} files shown"
             + ("; listing truncated" if truncated else "")
             + "):",
@@ -311,6 +414,7 @@ class ViolationsFinderAgent:
             {
                 "messages": [HumanMessage(content="\n".join(parts))],
                 "locations": [],
+                "project_id": effective_project_id,
             },
             config={"configurable": {"thread_id": session_id}, **({"callbacks": callbacks} if callbacks else {})},
         )

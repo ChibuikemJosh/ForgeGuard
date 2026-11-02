@@ -13,6 +13,7 @@ class ChatRequest(BaseModel):
     custom_security_violation_details: str = Field(min_length=1)
     project_folder: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
+    project_id: str | None = Field(default=None, min_length=1)
 
 
 class ChatLocation(BaseModel):

@@ -1,8 +1,10 @@
 """Tests for Phases 1-4: sample copies, downloads, node matches, trace/jobs."""
 import io
+import os
 import threading
 import time
 import zipfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -191,3 +193,112 @@ def test_jobs_live_cancel_conflict(env, monkeypatch):
         time.sleep(0.05)
     assert got.json()["status"] in ("cancelled", "completed")
     assert client.get("/api/workspace/investigations/nope").status_code == 404
+
+
+def test_cleanup_protects_active_and_expires_finished_jobs(tmp_path, monkeypatch):
+    from app.api.routers.workspace import _cleanup_old_uploads
+    from app.services.investigation_jobs import InvestigationJobManager
+    from app.schemas.security_investigation import InvestigationResult
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    active = root / "active-deadbeef"
+    completed = root / "completed-deadbeef"
+    failed = root / "failed-deadbeef"
+    cancelled = root / "cancelled-deadbeef"
+    for project in (active, completed, failed, cancelled):
+        project.mkdir()
+        (project / "app.py").write_text("x = 1\n")
+        old = time.time() - 10 * 3600
+        os.utime(project, (old, old))
+
+    active_project = SimpleNamespace(project_id="active", relative_path=active.name)
+    finished_projects = {
+        "completed": (completed, InvestigationStatus.COMPLETED),
+        "failed": (failed, InvestigationStatus.FAILED),
+        "cancelled": (cancelled, InvestigationStatus.CANCELLED),
+    }
+    release = threading.Event()
+
+    def runner(project, *_args):
+        if project.project_id == "active":
+            release.wait(timeout=5)
+        status = finished_projects.get(project.project_id, (None, InvestigationStatus.COMPLETED))[1]
+        return InvestigationResult(
+            investigation_id=f"investigation-{project.project_id}",
+            project_id=project.project_id,
+            rule_id="rule",
+            status=status,
+            summary=status.value,
+        )
+
+    manager = InvestigationJobManager(runner)
+    manager.start(active_project, None, None, SimpleNamespace(rule_id="rule"), "127.0.0.1")
+    for index, (project_id, (path, _status)) in enumerate(finished_projects.items(), start=2):
+        manager.start(
+            SimpleNamespace(project_id=project_id, relative_path=path.name),
+            None,
+            None,
+            SimpleNamespace(rule_id="rule"),
+            f"127.0.0.{index}",
+        )
+    _cleanup_old_uploads(root, manager)
+    assert active.exists()
+    release.set()
+    for _ in range(50):
+        if not manager.active_project_paths(root):
+            break
+        time.sleep(0.02)
+    _cleanup_old_uploads(root, manager)
+    assert not active.exists()
+    assert not completed.exists() and not failed.exists() and not cancelled.exists()
+
+
+def test_cleanup_allows_failed_and_cancelled_jobs_after_completion(tmp_path):
+    from app.api.routers.workspace import _cleanup_old_uploads
+    from app.services.investigation_jobs import InvestigationJobManager
+    from app.schemas.security_investigation import InvestigationResult
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    for name in ("failed-deadbeef", "cancelled-deadbeef"):
+        project = root / name
+        project.mkdir()
+        old = time.time() - 10 * 3600
+        os.utime(project, (old, old))
+
+    def runner(project, *_args):
+        status = InvestigationStatus.FAILED if project.project_id == "failed" else InvestigationStatus.CANCELLED
+        return InvestigationResult(
+            investigation_id=f"investigation-{project.project_id}",
+            project_id=project.project_id,
+            rule_id="rule",
+            status=status,
+            summary=status.value,
+        )
+
+    manager = InvestigationJobManager(runner)
+    manager.start(SimpleNamespace(project_id="failed", relative_path="failed-deadbeef"), None, None, SimpleNamespace(rule_id="rule"), "127.0.0.2")
+    manager.start(SimpleNamespace(project_id="cancelled", relative_path="cancelled-deadbeef"), None, None, SimpleNamespace(rule_id="rule"), "127.0.0.3")
+    for _ in range(50):
+        if not manager.active_project_paths(root):
+            break
+        time.sleep(0.02)
+    _cleanup_old_uploads(root, manager)
+    assert not (root / "failed-deadbeef").exists()
+    assert not (root / "cancelled-deadbeef").exists()
+
+
+def test_cleanup_ignores_missing_job_state(tmp_path):
+    from app.api.routers.workspace import _cleanup_old_uploads
+    from app.services.investigation_jobs import InvestigationJobManager
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    stale = root / "stale-deadbeef"
+    stale.mkdir()
+    old = time.time() - 10 * 3600
+    os.utime(stale, (old, old))
+    manager = InvestigationJobManager(lambda *_args: None)
+    _cleanup_old_uploads(root, manager)
+    assert not stale.exists()

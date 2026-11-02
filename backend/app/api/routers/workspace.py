@@ -12,6 +12,7 @@ import shutil
 import time
 import uuid
 import zipfile
+from contextlib import nullcontext
 from pathlib import Path
 
 import difflib
@@ -99,28 +100,33 @@ def _check_rate_limit(request: Request) -> None:
     _rate_hits[ip] = hits
 
 
-def _cleanup_old_uploads(root: Path) -> None:
+def _cleanup_old_uploads(root: Path, jobs: InvestigationJobManager | None = None) -> None:
     try:
         ttl_hours = float(os.environ.get("FORGE_UPLOAD_TTL_HOURS", "6"))
     except ValueError:
         ttl_hours = 6.0
     cutoff = time.time() - ttl_hours * 3600
     sample_paths = {s.path for s in SAMPLE_PROJECTS}
-    try:
-        entries = list(root.iterdir())
-    except OSError:
-        return
-    for entry in entries:
+    cleanup_context = jobs.cleanup_lock() if jobs is not None else nullcontext()
+    with cleanup_context:
+        active_paths = jobs.active_project_paths(root) if jobs is not None else set()
         try:
-            if not entry.is_dir() or entry.name in sample_paths:
-                continue
-            if not _UPLOAD_DIR_RE.match(entry.name):
-                continue
-            if entry.stat().st_mtime >= cutoff:
-                continue
-            shutil.rmtree(entry)
-        except Exception as error:  # never fail the upload
-            logger.warning("Could not clean up old upload %s: %s", entry, error)
+            entries = list(root.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            try:
+                if not entry.is_dir() or entry.name in sample_paths:
+                    continue
+                if not _UPLOAD_DIR_RE.match(entry.name):
+                    continue
+                if entry.resolve() in active_paths:
+                    continue
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+                shutil.rmtree(entry)
+            except Exception as error:  # never fail the upload
+                logger.warning("Could not clean up old upload %s: %s", entry, error)
 
 
 class OpenProjectRequest(BaseModel):
@@ -149,7 +155,7 @@ def open_project(request: OpenProjectRequest) -> ProjectReference:
     sample = next((s for s in SAMPLE_PROJECTS if s.path == request.path), None)
     if sample is not None:
         root = workspace_service.root
-        _cleanup_old_uploads(root)
+        _cleanup_old_uploads(root, job_manager)
         copy_name = f"{sample.path}-{uuid.uuid4().hex[:8]}"
         try:
             shutil.copytree(root / sample.path, root / copy_name, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", "node_modules", ".DS_Store"))
@@ -319,7 +325,7 @@ async def upload_project(request: Request, name: str | None = Query(default=None
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as error:
         raise HTTPException(status_code=400, detail="Upload is not a valid .zip file.") from error
-    _cleanup_old_uploads(root)
+    _cleanup_old_uploads(root, job_manager)
     dest.mkdir(parents=True, exist_ok=False)
     try:
         for info in archive.infolist():

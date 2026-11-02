@@ -5,7 +5,9 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from pathlib import Path
+from collections.abc import Iterator
 
 from app.schemas.security_investigation import InvestigationResult, InvestigationStatus
 from app.services.investigation_trace import InvestigationRecorder
@@ -21,7 +23,29 @@ class InvestigationJobManager:
         self._runner = runner
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._lock = threading.Lock()
+        self._cleanup_lock = threading.RLock()
         self._jobs: dict[str, dict] = {}
+
+    @contextmanager
+    def cleanup_lock(self) -> Iterator[None]:
+        """Coordinate project cleanup with job startup and file access."""
+        with self._cleanup_lock:
+            yield
+
+    def active_project_paths(self, root: Path) -> set[Path]:
+        """Return project directories currently accessed by running jobs."""
+        with self._lock:
+            projects = [
+                job.get("project")
+                for job in self._jobs.values()
+                if job.get("result") is None
+            ]
+        paths: set[Path] = set()
+        for project in projects:
+            relative_path = getattr(project, "relative_path", None)
+            if isinstance(relative_path, str):
+                paths.add((root / relative_path).resolve())
+        return paths
 
     def _cleanup(self):
         now = time.time()
@@ -34,15 +58,20 @@ class InvestigationJobManager:
                 del self._jobs[oldest]
 
     def start(self, project, index, graph, rule, client_ip) -> str:
-        self._cleanup()
         with self._lock:
             for j in self._jobs.values():
                 if j["client_ip"] == client_ip and j["result"] is None:
                     raise JobConflictError("An investigation is already running for this browser. Wait for it to finish or cancel it.")
-            investigation_id = f"investigation-{uuid.uuid4().hex[:12]}"
-            recorder = InvestigationRecorder()
-            job = {"project_id": project.project_id, "rule_id": rule.rule_id, "recorder": recorder, "future": None, "result": None, "client_ip": client_ip, "created_at": time.time(), "finished_at": None, "project": project, "rule": rule}
-            self._jobs[investigation_id] = job
+        with self._cleanup_lock:
+            self._cleanup()
+            with self._lock:
+                for j in self._jobs.values():
+                    if j["client_ip"] == client_ip and j["result"] is None:
+                        raise JobConflictError("An investigation is already running for this browser. Wait for it to finish or cancel it.")
+                investigation_id = f"investigation-{uuid.uuid4().hex[:12]}"
+                recorder = InvestigationRecorder()
+                job = {"project_id": project.project_id, "rule_id": rule.rule_id, "recorder": recorder, "future": None, "result": None, "client_ip": client_ip, "created_at": time.time(), "finished_at": None, "project": project, "rule": rule}
+                self._jobs[investigation_id] = job
 
         def _run():
             try:

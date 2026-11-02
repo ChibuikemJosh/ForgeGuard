@@ -35,6 +35,7 @@ class ProjectFixProposal(BaseModel):
     rollback_available: bool = False
     reviewer: str | None = None
     created_at: str
+    applied_at: str | None = None
     error: str | None = None
 
 

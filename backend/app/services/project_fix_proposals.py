@@ -229,6 +229,17 @@ class ProjectFixProposalService:
             raise FixBadResponseError(f"AI fix is not valid Python: {error}") from error
         return proposed, str(data.get("explanation") or "")
 
+    def applied_proposals(self, project_id: str) -> list[ProjectFixProposal]:
+        items = [p for p in self.proposals.values() if p.project_id == project_id and p.application_status is ProposalApplicationStatus.APPLIED]
+        return sorted(items, key=lambda p: p.applied_at or "")
+
+    def original_contents(self, project_id: str) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for p in self.applied_proposals(project_id):
+            if p.file_path not in result and p.proposal_id in self._rollback:
+                result[p.file_path] = self._rollback[p.proposal_id]
+        return result
+
     def get_proposal(self, proposal_id: str) -> ProjectFixProposal:
         try:
             return self.proposals[proposal_id]
@@ -276,6 +287,7 @@ class ProjectFixProposalService:
         self._atomic_write(target, proposal.proposed_content)
         self._applied_hash[proposal_id] = _digest(proposal.proposed_content)
         proposal.application_status = ProposalApplicationStatus.APPLIED
+        proposal.applied_at = _now()
         proposal.rollback_available = True
         proposal.error = None
         return proposal
@@ -291,6 +303,7 @@ class ProjectFixProposalService:
             raise FixConflictError("The file changed after application; refusing rollback.")
         self._atomic_write(target, original)
         proposal.application_status = ProposalApplicationStatus.NOT_APPLIED
+        proposal.applied_at = None
         proposal.rollback_available = False
         self._applied_hash.pop(proposal_id, None)
         return proposal

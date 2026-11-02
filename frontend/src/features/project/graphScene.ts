@@ -68,7 +68,7 @@ export function buildScene(graph: SourceGraph, focus: SceneFocus, ctx: SceneCont
   const cH = Math.max(180, (Math.max(...ys, 0) - Math.min(...ys, 0)) + 118 + 72);
   const home = homePos.get(groupId(focused.key)) ?? { x: 0, y: 0 };
   const container: Node = {
-    id: FOCUS_CONTAINER, type: "group", position: { x: home.x - 20, y: home.y + 132 }, draggable: false, selectable: false, focusable: false, zIndex: 1,
+    id: FOCUS_CONTAINER, type: "group", position: { x: home.x - 28, y: home.y + 150 }, draggable: false, selectable: false, focusable: false, zIndex: 1,
     style: { width: cW, height: cH, backgroundColor: "rgba(19,19,21,0.82)", border: "1px solid #4a3b28", borderRadius: 12, boxShadow: "0 24px 60px rgba(0,0,0,0.55)" }, data: {},
   };
   const minX = Math.min(...xs, 0); const minY = Math.min(...ys, 0);
@@ -78,7 +78,7 @@ export function buildScene(graph: SourceGraph, focus: SceneFocus, ctx: SceneCont
     const syms = symbolsInFile(graph, f.file_path ?? "");
     return {
       id: f.id, type: "graphCard", parentId: FOCUS_CONTAINER, extent: "parent",
-      position: { x: p.x - minX + 24, y: p.y - minY + 40 }, zIndex: 3,
+      position: { x: p.x - minX + 36, y: p.y - minY + 52 }, zIndex: 3,
       selected: focus.file === f.file_path || ctx.selectedFile === f.file_path,
       data: {
         variant: "file", eyebrow: "FILE", name: f.file_path?.split("/").pop() ?? f.name,
@@ -135,7 +135,7 @@ export function buildScene(graph: SourceGraph, focus: SceneFocus, ctx: SceneCont
     const p = symPos.get(s.id) ?? { x: 0, y: 0 };
     return {
       id: s.id, type: "graphCard", parentId: SYMBOL_CONTAINER, extent: "parent",
-      position: { x: p.x - sMinX + 24, y: p.y - sMinY + 40 }, zIndex: 4, selected: ctx.selectedNodeId === s.id,
+      position: { x: p.x - sMinX + 36, y: p.y - sMinY + 52 }, zIndex: 4, selected: ctx.selectedNodeId === s.id,
       data: {
         variant: "symbol", eyebrow: s.type.toUpperCase(), name: s.name,
         desc: s.qualified_name ?? s.file_path ?? "", meta: s.source?.line_start ? `line ${s.source.line_start}` : (s.file_path ?? ""),

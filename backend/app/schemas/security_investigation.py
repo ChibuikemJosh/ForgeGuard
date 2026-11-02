@@ -6,7 +6,10 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from typing import Literal
+
 from app.schemas.security import Severity, SourceReference, VerificationStatus
+from app.schemas.source_graph import SourceGraphNodeMatch
 
 
 class EvidenceType(str, Enum):
@@ -29,6 +32,21 @@ class InvestigationStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     INCONCLUSIVE = "inconclusive"
+    RUNNING = "running"
+    CANCELLED = "cancelled"
+
+
+class InvestigationStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: str
+    kind: Literal["planning", "model", "tool", "validation", "mapping"]
+    label: str
+    tool_name: str | None = None
+    status: Literal["running", "ok", "failed", "skipped"]
+    message: str | None = None
+    started_at: str
+    duration_ms: int | None = None
 
 
 class FindingStatus(str, Enum):
@@ -53,6 +71,7 @@ class EvidenceItem(BaseModel):
     file_hash: str | None = None
     observed: bool = False
     related_graph_nodes: list[str] = Field(default_factory=list)
+    node_matches: list[SourceGraphNodeMatch] = Field(default_factory=list)
     status: EvidenceStatus = EvidenceStatus.VALID
     validation_error: str | None = None
 
@@ -91,6 +110,7 @@ class InvestigationResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
     summary: str = ""
     truncated: bool = False
+    steps: list[InvestigationStep] = Field(default_factory=list)
 
     @property
     def context_truncated(self) -> bool:

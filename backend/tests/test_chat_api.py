@@ -27,7 +27,7 @@ def test_chat_returns_agent_locations(monkeypatch, tmp_path) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == [{"filename": "app/views.py", "linenumber": 42}]
+    assert response.json() == [{"filename": "app/views.py", "linenumber": 42, "relatednodes": []}]
 
 
 def test_chat_rejects_missing_fields() -> None:

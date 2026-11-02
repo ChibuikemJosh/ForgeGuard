@@ -13,7 +13,10 @@ import uuid
 import zipfile
 from pathlib import Path
 
+import difflib
+
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import is_production
@@ -33,6 +36,7 @@ from app.services.project_fix_proposals import (
     FixProposalError,
     ProjectFixProposalService,
 )
+from app.services.generated_rules import generate_rules
 from app.services.project_rules import RULE_PRESETS
 from app.services.project_workspace import (
     LANGUAGE_BY_SUFFIX,
@@ -41,6 +45,8 @@ from app.services.project_workspace import (
     _is_sensitive_file,
 )
 from app.services.python_indexer import PythonIndexer
+from app.services.investigation_jobs import InvestigationJobManager, JobConflictError
+from app.services.investigation_trace import InvestigationRecorder
 from app.services.security_investigation import SecurityInvestigationService
 from app.services.source_graph_builder import SourceGraphBuilder
 from app.services.symbol_resolution import SymbolResolver
@@ -136,10 +142,36 @@ def open_project(request: OpenProjectRequest) -> ProjectReference:
     """Register an existing directory inside the configured workspace root."""
     if is_production() and request.path not in {s.path for s in SAMPLE_PROJECTS}:
         raise HTTPException(status_code=403, detail="Only sample projects can be opened in the hosted demo. Upload a project folder instead.")
+    sample = next((s for s in SAMPLE_PROJECTS if s.path == request.path), None)
+    if sample is not None:
+        root = workspace_service.root
+        _cleanup_old_uploads(root)
+        copy_name = f"{sample.path}-{uuid.uuid4().hex[:8]}"
+        try:
+            shutil.copytree(root / sample.path, root / copy_name, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", "node_modules", ".DS_Store"))
+            return workspace_service.register_project(copy_name, request.name or sample.name)
+        except WorkspaceError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except OSError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     try:
         return workspace_service.register_project(request.path, request.name)
     except WorkspaceError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _project_or_404(project_id: str):
+    try:
+        ref = workspace_service.get_project(project_id)
+    except WorkspaceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    try:
+        root = workspace_service.project_root(project_id)
+    except WorkspaceError as error:
+        raise HTTPException(status_code=404, detail="This project copy has expired. Re-upload the project folder.") from error
+    if not root.exists():
+        raise HTTPException(status_code=404, detail="This project copy has expired. Re-upload the project folder.")
+    return ref
 
 
 @router.get("/projects/{project_id}", response_model=ProjectReference)
@@ -211,6 +243,19 @@ def list_samples() -> list[SampleProject]:
 @router.get("/projects/rules", response_model=list[SecurityRule], include_in_schema=False)
 def list_rules() -> list[SecurityRule]:
     return RULE_PRESETS
+
+
+@router.get("/projects/{project_id}/generated-rules", response_model=list[SecurityRule])
+def list_generated_rules(project_id: str) -> list[SecurityRule]:
+    """Rules derived from this project's own routes/resources (never presets)."""
+    try:
+        reference = workspace_service.get_project(project_id)
+        index = _indexer.index_project(workspace_service, project_id)
+        resolution = _resolver.resolve(index)
+        graph = _builder.build(reference, index, resolution)
+    except WorkspaceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return generate_rules(graph)
 
 
 @router.post("/projects/upload", response_model=ProjectReference)
@@ -311,6 +356,103 @@ def investigate_project(project_id: str, request: InvestigateRequest, http_reque
         return result
     except WorkspaceError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+def _run_job(project, index, graph, rule, recorder, investigation_id):
+    result = _investigator.investigate(project, index, graph, rule, session_id=investigation_id, recorder=recorder)
+    _last_investigations[project.project_id] = result
+    _fix_service().record_investigation(result)
+    return result
+
+
+job_manager = InvestigationJobManager(_run_job)
+
+
+@router.post("/projects/{project_id}/investigations", status_code=202)
+def start_investigation(project_id: str, request: InvestigateRequest, http_request: Request):
+    _check_rate_limit(http_request)
+    try:
+        reference = workspace_service.get_project(project_id)
+        index = _indexer.index_project(workspace_service, project_id)
+        resolution = SymbolResolver().resolve(index)
+        graph = SourceGraphBuilder().build(reference, index, resolution)
+    except WorkspaceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    ip = http_request.client.host if http_request.client else "unknown"
+    try:
+        investigation_id = job_manager.start(reference, index, graph, request.rule, ip)
+    except JobConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"investigation_id": investigation_id, "status": "running"}
+
+
+@router.get("/investigations/{investigation_id}", response_model=InvestigationResult)
+def get_investigation(investigation_id: str) -> InvestigationResult:
+    result = job_manager.get(investigation_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Unknown investigation. The server may have restarted; run the investigation again.")
+    return result
+
+
+@router.post("/investigations/{investigation_id}/cancel", response_model=InvestigationResult)
+def cancel_investigation(investigation_id: str) -> InvestigationResult:
+    result = job_manager.cancel(investigation_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Unknown investigation. The server may have restarted; run the investigation again.")
+    return result
+
+
+@router.get("/projects/{project_id}/applied-fixes", response_model=list[ProjectFixProposal])
+def list_applied_fixes(project_id: str) -> list[ProjectFixProposal]:
+    _project_or_404(project_id)
+    return _fix_service().applied_proposals(project_id)
+
+
+@router.get("/projects/{project_id}/changes.patch")
+def download_patch(project_id: str):
+    ref = _project_or_404(project_id)
+    service = _fix_service()
+    applied = service.applied_proposals(project_id)
+    if not applied:
+        raise HTTPException(status_code=409, detail="No applied fixes to download.")
+    originals = service.original_contents(project_id)
+    parts = []
+    for path, original in originals.items():
+        try:
+            current = workspace_service.read_file(project_id, path)
+        except WorkspaceError as error:
+            raise HTTPException(status_code=404, detail="This project copy has expired. Re-upload the project folder.") from error
+        parts.append("".join(difflib.unified_diff(original.splitlines(keepends=True), current.splitlines(keepends=True), fromfile=f"a/{path}", tofile=f"b/{path}")))
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", ref.name).strip("-") or "project"
+    return Response(content="".join(parts), media_type="text/x-diff", headers={"Content-Disposition": f'attachment; filename="{name}-forge-fixes.patch"'})
+
+
+@router.get("/projects/{project_id}/download")
+def download_zip(project_id: str):
+    ref = _project_or_404(project_id)
+    service = _fix_service()
+    applied = service.applied_proposals(project_id)
+    lines = ["# Forge Guard changes", "", "This is the uploaded copy of your project, excluding .git, virtual environments, node_modules, .env and other sensitive files, and files over 1 MB.", ""]
+    if applied:
+        lines.append("## Applied fixes")
+        for p in applied:
+            lines.append(f"- File: {p.file_path} · Finding: {p.finding_id} · Reviewer: {p.reviewer or ''} · Applied: {p.applied_at or ''}")
+            lines.append(f"  {p.explanation}")
+    else:
+        lines.append("No fixes have been applied yet.")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("FORGE_CHANGES.md", "\n".join(lines) + "\n")
+        for info in workspace_service.iter_files(project_id):
+            if not info.readable:
+                continue
+            try:
+                content = workspace_service.read_file(project_id, info.path)
+            except WorkspaceError:
+                continue
+            zf.writestr(info.path, content)
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", ref.name).strip("-") or "project"
+    return Response(content=buffer.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}-forge.zip"'})
 
 
 @router.post(

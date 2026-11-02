@@ -48,6 +48,10 @@ def _open(client):
     return r.json()["project_id"]
 
 
+def _rel(client, pid):
+    return client.get(f"/api/workspace/projects/{pid}").json()["relative_path"]
+
+
 def test_samples_and_register(client_env):
     client, _, _ = client_env
     r = client.get("/api/workspace/samples")
@@ -107,7 +111,7 @@ def _setup_finding(client_env, monkeypatch, proposed=None):
     monkeypatch.setattr(wr, "_investigator", SecurityInvestigationService(service, agent=agent))
     body = client.post(f"/api/workspace/projects/{pid}/investigate", json={"rule": {"rule_id": "r", "title": "T", "invariant": "I"}}).json()
     finding_id = body["findings"][0]["finding_id"]
-    original = (Path(service.root) / "orders-api/routes/orders.py").read_text()
+    original = (Path(service.root) / _rel(client, pid) / "routes/orders.py").read_text()
     fixed = proposed if proposed is not None else original.replace("    return order\n", "    if order.owner_id != customer.customer_id:\n        raise HTTPException(status_code=403, detail='no')\n    return order\n")
     fix.generator = lambda *a, **k: {"file_path": "routes/orders.py", "proposed_content": fixed, "explanation": "check owner"}
     return client, service, fix, pid, finding_id, original
@@ -119,7 +123,7 @@ def test_fix_lifecycle(client_env, monkeypatch):
     assert r.status_code == 200, r.text
     prop = r.json()
     assert prop["review_status"] == "pending" and prop["unified_diff"]
-    target = Path(service.root) / "orders-api/routes/orders.py"
+    target = Path(service.root) / _rel(client, pid) / "routes/orders.py"
     assert target.read_text() == original  # never auto-applied
     # AI actor rejected
     bad = client.post(f"/api/workspace/fix-proposals/{prop['proposal_id']}/review", json={"decision": "approved", "reviewer": "x", "actor": "ai"})
@@ -139,7 +143,7 @@ def test_fix_hash_mismatch_409(client_env, monkeypatch):
     client, service, fix, pid, finding_id, original = _setup_finding(client_env, monkeypatch)
     prop = client.post(f"/api/workspace/projects/{pid}/findings/{finding_id}/fix-proposals", json={}).json()
     client.post(f"/api/workspace/fix-proposals/{prop['proposal_id']}/review", json={"decision": "approved", "reviewer": "k", "actor": "human"})
-    target = Path(service.root) / "orders-api/routes/orders.py"
+    target = Path(service.root) / _rel(client, pid) / "routes/orders.py"
     target.write_text(original + "\n# changed\n")
     assert client.post(f"/api/workspace/fix-proposals/{prop['proposal_id']}/apply").status_code == 409
 

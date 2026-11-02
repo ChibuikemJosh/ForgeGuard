@@ -96,6 +96,10 @@ Unresolved and ambiguous calls are returned as `CALLS` edges with `target: null`
 - `line_end`
 - `file_hash`
 
+## Investigation node lookup contract
+
+The backend computes node matches for each validated evidence location with the pure function `match_nodes_at_location(graph, file_path, line_number)` in `backend/app/services/source_graph_lookup.py`. Its matches are **authoritative**: nodes containing the line in that file, ordered narrowest first (route/method/function, then class, then module; smaller line span first within a type), each with its `parent_node_id` from containment edges. The agent's `relatednodes` are optional hints, kept only when the `node_id` exists in the graph and its `file_path` equals the evidence file, and de-duplicated against backend matches. `SourceGraphNodeLookup.get_nodes_on_path_python` validates project, path, and line range, then delegates to `match_nodes_at_location`. A mapping failure is recorded in the investigation `errors` and as a failed `mapping` step; it never fails the investigation.
+
 ## Frontend notes
 
 - React Flow nodes can be created directly from `nodes[].id`, `type`, and `name`.

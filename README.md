@@ -28,14 +28,14 @@ violations can be traced to real files, symbols, and graph nodes.
 
 ## Core user workflow
 
-1. Register a Python project.
-2. Index its source and generate its SourceGraph.
-3. Provide a security or business rule.
-4. Run an investigation.
-5. Review findings and validated source evidence.
-6. Ask for explanations or proposed corrections through chat.
-7. Review any correction before application.
-8. Re-run the investigation after a correction.
+1. Upload a Python project folder (or open the sample — each visitor gets their own copy).
+2. Index its source and generate its SourceGraph (Map).
+3. Provide a security or business rule and run an investigation, watching live agent activity.
+4. Understand findings and validated source evidence with SourceGraph node matches.
+5. Review the proposed fix side-by-side on the Changes tab; approve or reject it.
+6. Apply the fix, or roll it back.
+7. Re-run the investigation to verify.
+8. Download your fixes as a `.patch` (apply with `git apply`) or download the project copy as a `.zip`.
 
 ## Architecture overview
 
@@ -200,11 +200,7 @@ The bundled sample project lives at `backend/workspaces/orders-api/`; use the
 folder from the same picker (folders are zipped in the browser,
 skipping `.git`/`node_modules`/venvs/`.env`; the zip is extracted safely on the backend,
 sensitive files are skipped, code is parsed with `ast` and never executed).
-Reset the sample after applying fixes:
-
-```bash
-git checkout backend/workspaces/orders-api
-```
+Opening the sample copies it per visitor (`orders-api-<id>`), so applying a fix never changes the tracked sample or another visitor's copy. Old copies are cleaned up after `FORGE_UPLOAD_TTL_HOURS` (default 6).
 
 ### Curl smoke test
 
@@ -228,4 +224,5 @@ No authentication by design. Projects are lost on browser refresh or backend res
   `uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
   (no `--reload`, no extra workers; `--proxy-headers` lets the per-IP rate limit see real client IPs behind the host's proxy). Set `META_MODEL_API_KEY`, `META_MODEL_BASE_URL`, `META_MODEL_NAME`, `FORGE_ENV=production`, and `FORGE_CORS_ORIGINS=https://<frontend-domain>`. Run a **single instance** (state is in memory).
 - **Frontend (Vercel / Netlify):** root directory `frontend/`, build command `npm run build`, output `dist`; set `VITE_API_BASE_URL=https://<backend-domain>` at build time.
-- In production only sample projects can be opened by path, the legacy security demo apply/rollback are disabled, and AI endpoints are rate-limited per IP (10/hour).
+- In production only sample projects can be opened by path, the legacy security demo apply/rollback are disabled, and AI endpoints are rate-limited per IP (10/hour). Polling, cancelling, and downloads are not rate-limited.
+- **Single uvicorn worker required; running investigations and project copies are lost on restart.** Downloads then return "This project copy has expired. Re-upload the project folder."

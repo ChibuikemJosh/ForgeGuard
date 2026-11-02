@@ -278,6 +278,7 @@ class ViolationsFinderAgent:
         custom_security_violation_details: str,
         project_folder: str,
         session_id: str,
+        callbacks: list | None = None,
     ) -> list[ChatLocation]:
         """Map violation details to source locations for one session."""
         api_key = self._api_key()
@@ -311,7 +312,7 @@ class ViolationsFinderAgent:
                 "messages": [HumanMessage(content="\n".join(parts))],
                 "locations": [],
             },
-            config={"configurable": {"thread_id": session_id}},
+            config={"configurable": {"thread_id": session_id}, **({"callbacks": callbacks} if callbacks else {})},
         )
         return [
             ChatLocation.model_validate(item)

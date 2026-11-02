@@ -38,6 +38,7 @@ export function FindingsPanel({ result, selected, onSelect, onRunAgain }: Props)
         </div>
       ) : null}
       {result.truncated ? <p className="mt-2 rounded bg-sev-warning/10 px-2 py-1 text-[11px] text-sev-warning">Not all Python files were sent to the model. Results may be incomplete.</p> : null}
+      {(result.status === "failed" ? result.errors.slice(1) : result.errors).map((e) => <p key={e} className="mt-1 rounded bg-sev-warning/10 px-2 py-1 font-mono text-[10px] text-sev-warning" role="alert">{e}</p>)}
       <div className="mt-3 flex flex-col gap-2">
         {result.findings.length === 0 ? <p className="text-[11px] text-zinc-500">Backend returned no findings.</p> : result.findings.map((f) => (
           <article key={f.finding_id} className={`rounded-md border p-2 ${selected?.finding_id === f.finding_id ? "border-ember bg-panel-2" : "border-line bg-panel-2/60"}`}>

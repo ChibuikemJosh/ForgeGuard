@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import logging
 import os
 import re
@@ -26,6 +27,7 @@ from app.schemas.project_fix import (
     FileContentResponse,
     ProjectFixProposal,
     ProjectReviewRequest,
+    ProjectRuleSet,
     SampleProject,
 )
 from app.schemas.security import SecurityRule
@@ -40,6 +42,7 @@ from app.services.generated_rules import generate_rules
 from app.services.project_rules import RULE_PRESETS
 from app.services.project_workspace import (
     LANGUAGE_BY_SUFFIX,
+    PROJECT_MARKER,
     WorkspaceError,
     WorkspaceService,
     _is_sensitive_file,
@@ -149,6 +152,7 @@ def open_project(request: OpenProjectRequest) -> ProjectReference:
         copy_name = f"{sample.path}-{uuid.uuid4().hex[:8]}"
         try:
             shutil.copytree(root / sample.path, root / copy_name, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", "node_modules", ".DS_Store"))
+            (root / copy_name / PROJECT_MARKER).write_text(json.dumps({"source": "sample", "sample_path": sample.path}), encoding="utf-8")
             return workspace_service.register_project(copy_name, request.name or sample.name)
         except WorkspaceError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
@@ -172,6 +176,13 @@ def _project_or_404(project_id: str):
     if not root.exists():
         raise HTTPException(status_code=404, detail="This project copy has expired. Re-upload the project folder.")
     return ref
+
+
+@router.get("/rules", response_model=list[SecurityRule])
+@router.get("/projects/rules", response_model=list[SecurityRule], include_in_schema=False)
+def list_rules() -> list[SecurityRule]:
+    """Preset rules. Frontend uses `/projects/{id}/rules`."""
+    return RULE_PRESETS
 
 
 @router.get("/projects/{project_id}", response_model=ProjectReference)
@@ -239,15 +250,12 @@ def list_samples() -> list[SampleProject]:
     return [s for s in SAMPLE_PROJECTS if (root / s.path).is_dir()]
 
 
-@router.get("/rules", response_model=list[SecurityRule])
-@router.get("/projects/rules", response_model=list[SecurityRule], include_in_schema=False)
-def list_rules() -> list[SecurityRule]:
-    return RULE_PRESETS
-
-
 @router.get("/projects/{project_id}/generated-rules", response_model=list[SecurityRule])
 def list_generated_rules(project_id: str) -> list[SecurityRule]:
-    """Rules derived from this project's own routes/resources (never presets)."""
+    """Rules derived from this project's own routes/resources (never presets).
+
+    Frontend uses `/projects/{id}/rules`.
+    """
     try:
         reference = workspace_service.get_project(project_id)
         index = _indexer.index_project(workspace_service, project_id)
@@ -256,6 +264,24 @@ def list_generated_rules(project_id: str) -> list[SecurityRule]:
     except WorkspaceError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return generate_rules(graph)
+
+
+@router.get("/projects/{project_id}/rules", response_model=ProjectRuleSet)
+def get_project_rules(project_id: str) -> ProjectRuleSet:
+    """The rule set for one project: presets for the sample, generated rules for uploads."""
+    _project_or_404(project_id)
+    source, _sample_path = workspace_service.project_source(project_id)
+    if source == "sample":
+        return ProjectRuleSet(project_id=project_id, source=source, rule_origin="preset", rules=RULE_PRESETS, default_rule_id="order-ownership-authorization")
+    try:
+        reference = workspace_service.get_project(project_id)
+        index = _indexer.index_project(workspace_service, project_id)
+        resolution = _resolver.resolve(index)
+        graph = _builder.build(reference, index, resolution)
+    except WorkspaceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    rules = generate_rules(graph)
+    return ProjectRuleSet(project_id=project_id, source=source, rule_origin="generated", rules=rules, default_rule_id=rules[0].rule_id if rules else None)
 
 
 @router.post("/projects/upload", response_model=ProjectReference)

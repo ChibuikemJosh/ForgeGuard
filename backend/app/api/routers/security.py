@@ -88,7 +88,10 @@ def analyze_security_demo(
 
 @router.get("/rules")
 def list_security_rules():
-    """Return preset SecurityRule objects for project investigation."""
+    """Return preset SecurityRule objects for project investigation.
+
+    Frontend uses `/projects/{id}/rules`.
+    """
     from app.services.project_rules import RULE_PRESETS
 
     return RULE_PRESETS

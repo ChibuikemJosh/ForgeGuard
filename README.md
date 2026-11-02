@@ -30,7 +30,7 @@ violations can be traced to real files, symbols, and graph nodes.
 
 1. Upload a Python project folder (or open the sample — each visitor gets their own copy).
 2. Index its source and generate its SourceGraph (Map).
-3. Provide a security or business rule and run an investigation, watching live agent activity.
+3. Provide a security or business rule and run an investigation, watching live agent activity. The sample project uses the 3 demo preset rules; an uploaded project gets only rules generated from its own routes and resource IDs, or a custom rule you write.
 4. Understand findings and validated source evidence with SourceGraph node matches.
 5. Review the proposed fix side-by-side on the Changes tab; approve or reject it.
 6. Apply the fix, or roll it back.
@@ -167,7 +167,11 @@ No database, Redis, or production authentication infrastructure is implemented.
 Workflow: Select project (SourceGraph builds automatically) → Select rule → Run AI
 investigation (Meta Muse model) → View findings → Explore graph → AI-assisted
 fix → Review → Apply / Rollback. AI findings are shown as **Potential** (the
-backend status verbatim), never Confirmed.
+backend status verbatim), never Confirmed. Rules are loaded per project: the
+sample project shows the 3 demo preset rules (defaulting to order ownership),
+while uploaded projects show only rules generated from their own routes and
+resource IDs — an upload with no routes gets no generated rules, so write a
+custom rule there.
 
 Meta Model API config (`backend/.env`, never in the frontend):
 

@@ -14,8 +14,7 @@ const MAX_FILE_BYTES = 1_048_576;
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_ENTRIES = 0xffff;
 
-export interface SkippedFile { path: string; reason: string }
-export interface ZippedFolder { zip: File; fileCount: number; skippedCount: number; skipped: SkippedFile[] }
+export interface ZippedFolder { zip: File; fileCount: number; skippedCount: number }
 
 function isSensitive(name: string): boolean {
   return name === ".env" || name.startsWith(".env.") || name.startsWith(".env-");
@@ -97,21 +96,15 @@ export async function zipFolder(files: File[]): Promise<ZippedFolder> {
   const rootName = relativePath(files[0]).split("/")[0] || "uploaded-project";
 
   const kept: File[] = [];
-  const skipped: SkippedFile[] = [];
+  let skippedCount = 0;
   for (const file of files) {
     const path = relativePath(file);
     const parts = path.split("/");
     const dirs = parts.slice(0, -1);
     const name = parts[parts.length - 1];
-    let reason: string | null = null;
-    if (name === ".DS_Store") reason = ".DS_Store";
-    else if (dirs.some((d) => IGNORED_DIRECTORIES.has(d))) reason = "ignored folder";
-    else if (isSensitive(name)) reason = "sensitive file";
-    else if (file.size > MAX_FILE_BYTES) reason = "over 1 MB";
-    if (reason) { skipped.push({ path, reason }); continue; }
+    if (name === ".DS_Store" || dirs.some((d) => IGNORED_DIRECTORIES.has(d)) || isSensitive(name) || file.size > MAX_FILE_BYTES) { skippedCount++; continue; }
     kept.push(file);
   }
-  const skippedCount = skipped.length;
   if (kept.length === 0) throw new Error("No uploadable files in the selected folder (everything was ignored, sensitive, or over 1 MB).");
   if (kept.length > MAX_ENTRIES) throw new Error(`Folder has too many files (${kept.length}); upload a smaller project.`);
   const payloadBytes = kept.reduce((n, f) => n + f.size, 0);
@@ -134,5 +127,5 @@ export async function zipFolder(files: File[]): Promise<ZippedFolder> {
   const end = endOfCentralDirectory(kept.length, centralSize, offset);
 
   const zip = new File([...body, ...central, end] as BlobPart[], `${rootName}.zip`, { type: "application/zip" });
-  return { zip, fileCount: kept.length, skippedCount, skipped };
+  return { zip, fileCount: kept.length, skippedCount };
 }

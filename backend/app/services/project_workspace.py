@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
 from app.schemas.workspace import ProjectFile, ProjectManifest, ProjectReference
 
@@ -29,8 +30,11 @@ IGNORED_DIRECTORIES = {
     ".vscode",
 }
 
+PROJECT_MARKER = ".forge-project.json"
+
 SENSITIVE_FILE_NAMES = {
     ".env",
+    PROJECT_MARKER,
 }
 
 LANGUAGE_BY_SUFFIX = {
@@ -145,6 +149,18 @@ class WorkspaceService:
         if project_id not in self._project_paths and not self._recover(project_id):
             raise WorkspaceError("Unknown project.")
         return self._project_paths[project_id]
+
+    def project_source(self, project_id: str) -> tuple[Literal["sample", "upload"], str | None]:
+        """Where this project came from, read from the on-disk marker (survives restarts)."""
+        try:
+            marker = self.project_root(project_id) / PROJECT_MARKER
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ("upload", None)
+        if isinstance(data, dict) and data.get("source") == "sample":
+            sample_path = data.get("sample_path")
+            return ("sample", sample_path if isinstance(sample_path, str) else None)
+        return ("upload", None)
 
     def _ignored(self, path: Path) -> bool:
         return path.name in IGNORED_DIRECTORIES

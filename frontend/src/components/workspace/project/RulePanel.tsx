@@ -1,10 +1,12 @@
 import { useState } from "react";
 import type { SecurityRule } from "../../../features/project/types";
-interface Props { rules: SecurityRule[]; rule: SecurityRule | null; onSelect: (r: SecurityRule) => void; busy: boolean; canInvestigate: boolean; onInvestigate: () => void; onCancel: () => void; investigating: boolean; pythonCount?: number | null }
+import { AiInlinePulse } from "../AiLoading";
+interface Props { rules: SecurityRule[]; rule: SecurityRule | null; ruleOrigin: "preset" | "generated" | null; rulesLoading: boolean; onSelect: (r: SecurityRule) => void; busy: boolean; canInvestigate: boolean; onInvestigate: () => void; onCancel: () => void; investigating: boolean; pythonCount?: number | null }
 
 const blank = (id: string): SecurityRule => ({ rule_id: id, title: "", invariant: "", name: null, description: null, category: null, severity: "high", expected_property: null, concepts: [], indicators: [], guidance: null, examples: [] });
 
-export function RulePanel({ rules, rule, onSelect, busy, canInvestigate, onInvestigate, onCancel, investigating }: Props) {
+export function RulePanel({ rules, rule, ruleOrigin, rulesLoading, onSelect, busy, canInvestigate, onInvestigate, onCancel, investigating }: Props) {
+  const emptyGenerated = ruleOrigin === "generated" && rules.length === 0;
   const [custom, setCustom] = useState({ title: "", invariant: "", description: "", indicators: "" });
   const useCustom = () => {
     if (!custom.title.trim() || !custom.invariant.trim()) return;
@@ -21,19 +23,25 @@ export function RulePanel({ rules, rule, onSelect, busy, canInvestigate, onInves
           <div role="tooltip" className="pointer-events-none absolute right-0 top-6 z-20 w-64 rounded-md border border-line bg-panel-2 p-3 text-[11px] leading-relaxed text-zinc-300 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <p className="font-semibold text-zinc-100">What is a rule?</p>
             <p className="mt-1">A rule is a security property that should always hold in your project — for example, “users may only access their own orders”. Forge sends the selected rule, plus relevant code from your project, to the AI investigator.</p>
-            <p className="mt-1">The investigator looks for places that may break the rule, maps them to the graph, and returns findings with evidence. Preset rules are fixed examples. Rules labelled “Generated for your project” are derived from your own routes and resource IDs. You can also write a custom rule below.</p>
+            <p className="mt-1">The investigator looks for places that may break the rule, maps them to the graph, and returns findings with evidence. The sample project uses three fixed demo rules. For your own projects, Forge generates rules from your routes and resource IDs. You can always write a custom rule.</p>
             <p className="mt-1 text-zinc-400">Pick a rule, then choose “Run AI investigation”. Nothing is changed until you review and apply a fix in the Changes tab.</p>
           </div>
         </div>
       </div>
-      <label className="mt-2 block text-[11px] text-zinc-300">Preset
-        <select className={`${input} mt-1`} value={rule?.rule_id ?? ""} onChange={(e) => { const r = rules.find((x) => x.rule_id === e.target.value); if (r) onSelect(r); }}>
-          <option value="" disabled>Choose a rule…</option>
-          {rules.map((r) => <option key={r.rule_id} value={r.rule_id}>{r.generated ? "Generated for your project · " : ""}{r.title ?? r.rule_id}</option>)}
-        </select>
-      </label>
+      {ruleOrigin === "preset" ? <p className="mt-2 text-[11px] text-zinc-400">Sample rules for the Orders API demo.</p> : null}
+      {ruleOrigin === "generated" ? <p className="mt-2 text-[11px] text-zinc-400">Rules generated from your project's routes and resource IDs.</p> : null}
+      {rulesLoading ? <p className="mt-2 text-[11px] text-zinc-300"><AiInlinePulse label="Generating rules for your project…" /></p> : null}
+      {emptyGenerated && !rulesLoading ? <p className="mt-2 text-[11px] leading-relaxed text-zinc-300">No rules could be generated from this project (no routes or resource IDs were found). Write a custom rule below.</p> : null}
+      {!emptyGenerated ? (
+        <label className="mt-2 block text-[11px] text-zinc-300">Rule
+          <select disabled={rulesLoading} className={`${input} mt-1 disabled:opacity-40`} value={rule?.rule_id ?? ""} onChange={(e) => { const r = rules.find((x) => x.rule_id === e.target.value); if (r) onSelect(r); }}>
+            <option value="" disabled>Choose a rule…</option>
+            {rules.map((r) => <option key={r.rule_id} value={r.rule_id}>{r.generated ? "Generated for your project · " : ""}{r.title ?? r.rule_id}</option>)}
+          </select>
+        </label>
+      ) : null}
       {rule ? <div className="mt-2 rounded-md bg-panel-2 p-2 text-[11px] leading-relaxed text-zinc-300"><p>{rule.invariant}</p>{rule.description ? <p className="mt-1 text-zinc-400">{rule.description}</p> : null}<p className="mt-1 font-mono text-[9px] text-zinc-500">{rule.rule_id} · severity {rule.severity}{rule.generated ? " · generated for your project" : ""}</p></div> : null}
-      <details className="mt-3">
+      <details className="mt-3" open={emptyGenerated || undefined}>
         <summary className="cursor-pointer text-[11px] text-zinc-300">Custom rule</summary>
         <div className="mt-2 flex flex-col gap-2">
           <input className={input} placeholder="Title" value={custom.title} onChange={(e) => setCustom({ ...custom, title: e.target.value })} />

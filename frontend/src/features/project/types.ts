@@ -1,5 +1,3 @@
-export interface ApiLogEntry { id: number; at: string; method: string; path: string; status: number | string; durationMs: number }
-
 export interface ProjectReference { project_id: string; name: string; relative_path: string }
 export interface ProjectFile { path: string; language: string | null; size_bytes: number; sha256: string | null; readable: boolean; error: string | null }
 export interface ProjectManifest { project_id: string; name: string; relative_path: string; file_count: number; python_file_count: number; files: ProjectFile[]; ignored_directories: string[] }
@@ -12,6 +10,7 @@ export interface SourceGraphSummary { total_nodes: number; total_edges: number; 
 export interface SourceGraph { project_id: string; project_name: string | null; relative_path: string | null; nodes: SourceGraphNode[]; edges: SourceGraphEdge[]; errors: string[]; summary: SourceGraphSummary }
 
 export interface SecurityRule { rule_id: string; title: string | null; invariant: string | null; name: string | null; description: string | null; category: string | null; severity: string; expected_property: string | null; concepts: string[]; indicators: string[]; guidance: string | null; examples: string[]; generated?: boolean }
+export interface ProjectRuleSet { project_id: string; source: "sample" | "upload"; rule_origin: "preset" | "generated"; rules: SecurityRule[]; default_rule_id: string | null }
 
 export interface SourceGraphNodeMatch { node_id: string; node_type: string; name: string; qualified_name: string | null; file_path: string | null; start_line: number | null; end_line: number | null; parent_node_id: string | null }
 export interface EvidenceItem { evidence_id: string; evidence_type: string; description: string; file_path: string; source: SourceReference; excerpt: string | null; symbol_id: string | null; file_hash: string | null; observed: boolean; related_graph_nodes: string[]; node_matches: SourceGraphNodeMatch[]; status: string; validation_error: string | null }

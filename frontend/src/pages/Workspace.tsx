@@ -13,13 +13,12 @@ import { ProjectCodeViewer } from "../components/workspace/project/ProjectCodeVi
 import { RulePanel } from "../components/workspace/project/RulePanel";
 import { FindingsPanel } from "../components/workspace/project/FindingsPanel";
 import { WorkspaceTabs, type WorkspaceTab } from "../components/workspace/WorkspaceTabs";
-import { OutputPanel, type OutputTab } from "../components/workspace/output/OutputPanel";
+import { AgentActivity } from "../components/workspace/project/AgentActivity";
 import { ChangesView } from "../components/workspace/changes/ChangesView";
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 const LEFT = { def: 260, min: 180, max: 420 };
 const RIGHT = { def: 340, min: 240, max: 560 };
-const BOTTOM = { def: 224, min: 120, max: 520 };
 type CenterTab = "graph" | "code" | "split";
 const STEPS: readonly WorkflowStep[] = [
   { label: "Load" }, { label: "Map" }, { label: "Investigate" },
@@ -30,14 +29,11 @@ export default function Workspace() {
   const navigate = useNavigate();
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  const [bottomOpen, setBottomOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(LEFT.def);
   const [rightWidth, setRightWidth] = useState(RIGHT.def);
-  const [bottomHeight, setBottomHeight] = useState(BOTTOM.def);
   const [centerTab, setCenterTab] = useState<CenterTab>("split");
   const [splitPct, setSplitPct] = useState(52);
   const [tab, setTab] = useState<WorkspaceTab>("investigate");
-  const [outputTab, setOutputTab] = useState<OutputTab>("activity");
   const [focusFile, setFocusFile] = useState<string | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const proj = useProjectWorkflow();
@@ -83,14 +79,11 @@ export default function Workspace() {
     else { setRightOpen(true); setCenterTab("split"); }
   }, []);
 
-  const busyLoading = pstate.busy && (pstate.phase === "analyzing" || pstate.phase === "investigating" || pstate.phase === "proposing_fix" || pstate.phase === "applying");
-  const handleInvestigate = useCallback(() => { setBottomOpen(true); setOutputTab("activity"); void pactions.investigate(); }, [pactions]);
-
   return (
     <div className="flex h-screen flex-col gap-1.5 bg-ide-bg p-1.5 font-ui text-zinc-100">
       <a href="#workspace-graph" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-ember focus:px-3 focus:py-2 focus:text-white">Skip to graph</a>
       <Toaster theme="dark" toastOptions={{ style: { background: "#1a1a1d", border: "1px solid #262629", color: "#f4f4f5" } }} position="bottom-right" />
-      <TitleBar leftOpen={leftOpen} rightOpen={rightOpen} bottomOpen={bottomOpen} onToggleLeft={() => setLeftOpen((v) => !v)} onToggleRight={() => setRightOpen((v) => !v)} onToggleBottom={() => setBottomOpen((v) => !v)} onHome={() => navigate("/")} projectName={pstate.project?.name ?? null} onChangeProject={pactions.changeProject} />
+      <TitleBar leftOpen={leftOpen} rightOpen={rightOpen} onToggleLeft={() => setLeftOpen((v) => !v)} onToggleRight={() => setRightOpen((v) => !v)} onHome={() => navigate("/")} projectName={pstate.project?.name ?? null} onChangeProject={pactions.changeProject} />
       <div className="flex min-h-0 flex-1 gap-1.5">
         {leftOpen && pstate.project ? (<>
           <div className="shrink-0" style={{ width: leftWidth }}>
@@ -134,21 +127,14 @@ export default function Workspace() {
             </div>
             </>)}
           </>)}
-          {bottomOpen ? (<>
-            <ResizeHandle axis="y" label="Resize bottom panel" onResize={(d) => setBottomHeight((h) => clamp(h - d, BOTTOM.min, BOTTOM.max))} />
-            <div className="shrink-0" style={{ height: bottomHeight }}>
-              <OutputPanel graph={pstate.graph} manifest={pstate.manifest} investigation={pstate.investigation} uploadSkipped={pstate.uploadSkipped} logs={pstate.logs}
-                running={pstate.phase === "investigating"} busy={busyLoading} activeTab={outputTab} onTabChange={setOutputTab} onClose={() => setBottomOpen(false)}
-                onOpenFile={(p) => { void pactions.openFile(p); setCenterTab("split"); }} />
-            </div>
-          </>) : null}
         </div>
         {rightOpen && pstate.project && tab === "investigate" ? (<>
           <ResizeHandle axis="x" label="Resize Findings sidebar" onResize={(d) => setRightWidth((w) => clamp(w - d, RIGHT.min, RIGHT.max))} />
           <div className="shrink-0" style={{ width: rightWidth }}>
             <div className="workspace-scroll flex h-full flex-col gap-1.5 overflow-y-auto">
-              <RulePanel rules={pstate.rules} rule={pstate.rule} onSelect={pactions.setRule} busy={pstate.busy} canInvestigate={!!pstate.project && !!pstate.graph && !!pstate.rule} onInvestigate={handleInvestigate} onCancel={pactions.cancel} investigating={pstate.phase === "investigating"} pythonCount={pstate.manifest?.python_file_count ?? null} />
-              <FindingsPanel result={pstate.investigation} selected={pstate.selectedFinding} onRunAgain={handleInvestigate} onSelect={(f) => { pactions.selectFinding(f); if (f.affected_files[0]) drillToFile(f.affected_files[0]); setCenterTab("split"); setRightOpen(true); }} />
+              <RulePanel rules={pstate.rules} rule={pstate.rule} ruleOrigin={pstate.ruleOrigin} rulesLoading={pstate.rulesLoading} onSelect={pactions.setRule} busy={pstate.busy} canInvestigate={!!pstate.project && !!pstate.graph && !!pstate.rule} onInvestigate={pactions.investigate} onCancel={pactions.cancel} investigating={pstate.phase === "investigating"} pythonCount={pstate.manifest?.python_file_count ?? null} />
+              <AgentActivity steps={pstate.investigation?.steps ?? []} running={pstate.phase === "investigating"} />
+              <FindingsPanel result={pstate.investigation} selected={pstate.selectedFinding} onRunAgain={pactions.investigate} onSelect={(f) => { pactions.selectFinding(f); if (f.affected_files[0]) drillToFile(f.affected_files[0]); setCenterTab("split"); setRightOpen(true); }} />
               {pstate.selectedFinding ? <button type="button" onClick={() => setTab("changes")} className="w-full rounded bg-ember px-3 py-2 text-[12px] font-semibold text-white focus-visible:outline-2 focus-visible:outline-ide-blue">Propose a fix →</button> : null}
             </div>
           </div>

@@ -11,7 +11,7 @@ export interface HealthResponse {
 }
 
 import type { Graph, GraphPreviewResponse, ValidationResult } from '../../features/graph/types'
-import type { FileContentResponse, InvestigationResult, ProjectFixProposal, ProjectManifest, ProjectReference, SampleProject, SecurityRule as ProjectSecurityRule, SourceGraph } from '../../features/project/types'
+import type { FileContentResponse, InvestigationResult, ProjectFixProposal, ProjectManifest, ProjectReference, ProjectRuleSet, SampleProject, SecurityRule as ProjectSecurityRule, SourceGraph } from '../../features/project/types'
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000'
 
@@ -66,8 +66,7 @@ export async function uploadProjectZip(file: File, signal?: AbortSignal): Promis
 export async function getManifest(id: string, signal?: AbortSignal): Promise<ProjectManifest> { return requestJson<ProjectManifest>(`/api/workspace/projects/${encodeURIComponent(id)}/manifest`, { signal }); }
 export async function getSourceGraph(id: string, signal?: AbortSignal): Promise<SourceGraph> { return requestJson<SourceGraph>(`/api/workspace/projects/${encodeURIComponent(id)}/source-graph`, { signal }); }
 export async function getFileContent(id: string, path: string, signal?: AbortSignal): Promise<FileContentResponse> { return requestJson<FileContentResponse>(`/api/workspace/projects/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(path)}`, { signal }); }
-export async function listRules(signal?: AbortSignal): Promise<ProjectSecurityRule[]> { return requestJson<ProjectSecurityRule[]>("/api/security/rules", { signal }); }
-export async function listGeneratedRules(id: string, signal?: AbortSignal): Promise<ProjectSecurityRule[]> { const r = await requestJson<ProjectSecurityRule[]>(`/api/workspace/projects/${encodeURIComponent(id)}/generated-rules`, { signal }); return r.map((x) => ({ ...x, generated: true })); }
+export async function getProjectRules(id: string, signal?: AbortSignal): Promise<ProjectRuleSet> { const r = await requestJson<ProjectRuleSet>(`/api/workspace/projects/${encodeURIComponent(id)}/rules`, { signal }); return { ...r, rules: r.rules.map((x) => ({ ...x, generated: r.rule_origin === "generated" })) }; }
 export async function investigateProject(id: string, rule: ProjectSecurityRule, signal?: AbortSignal): Promise<InvestigationResult> { return requestJson<InvestigationResult>(`/api/workspace/projects/${encodeURIComponent(id)}/investigate`, jsonInit("POST", { rule }, signal)); }
 export async function startInvestigation(id: string, rule: ProjectSecurityRule, signal?: AbortSignal): Promise<{ investigation_id: string; status: string }> { return requestJson<{ investigation_id: string; status: string }>(`/api/workspace/projects/${encodeURIComponent(id)}/investigations`, jsonInit("POST", { rule }, signal)); }
 export async function getInvestigation(investigationId: string, signal?: AbortSignal): Promise<InvestigationResult> { return requestJson<InvestigationResult>(`/api/workspace/investigations/${encodeURIComponent(investigationId)}`, { signal }); }

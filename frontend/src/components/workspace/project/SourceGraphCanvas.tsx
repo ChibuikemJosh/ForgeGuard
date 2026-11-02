@@ -32,20 +32,30 @@ function Flow(props: Props & { group: string | null; file: string | null; setGro
   const { fitView } = useReactFlow();
   useEffect(() => { setNodes(scene.nodes as never[]); setEdges(scene.edges); }, [scene, setNodes, setEdges]);
   useEffect(() => {
-    const t = window.setTimeout(() => {
-      if (props.file) void fitView({ nodes: [{ id: SYMBOL_CONTAINER }, { id: FOCUS_CONTAINER }], padding: 0.16, duration: 700, maxZoom: 1.1 });
-      else if (props.group) void fitView({ nodes: [{ id: `group:${props.group}` }, { id: FOCUS_CONTAINER }], padding: 0.18, duration: 700, maxZoom: 1.1 });
-      else void fitView({ padding: 0.22, duration: 700, maxZoom: 1 });
-    }, 60);
-    return () => window.clearTimeout(t);
-  }, [props.group, props.file, fitView]);
+    let raf2 = 0;
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        if (props.file) void fitView({ nodes: [{ id: SYMBOL_CONTAINER }], padding: 0.12, duration: 700, maxZoom: 1 });
+        else if (props.group) void fitView({ nodes: [{ id: `group:${props.group}` }, { id: FOCUS_CONTAINER }], padding: 0.28, duration: 700, maxZoom: 1 });
+        else void fitView({ padding: 0.22, duration: 700, maxZoom: 1 });
+      });
+    });
+    return () => { window.cancelAnimationFrame(raf1); window.cancelAnimationFrame(raf2); };
+  }, [props.group, props.file, scene.nodes.length, fitView]);
 
   const handleClick: NodeMouseHandler = useCallback((_e, node) => {
     if (node.type !== "graphCard" || !props.graph) return;
-    if (node.id.startsWith("group:")) { props.setGroup(node.id.slice(6)); props.setFile(null); return; }
+    if (node.id.startsWith("group:")) {
+      const key = node.id.slice(6);
+      if (props.group !== key) { props.setGroup(key); props.setFile(null); }
+      return;
+    }
     const src = props.graph.nodes.find((n) => n.id === node.id);
     if (!src) return;
-    if (src.type === "module" && src.file_path) { props.setFile(src.file_path); props.onSelectFile(src.file_path); return; }
+    if (src.type === "module" && src.file_path) {
+      if (props.file !== src.file_path) { props.setFile(src.file_path); props.onSelectFile(src.file_path); }
+      return;
+    }
     props.onSelectNode(node.id);
   }, [props]);
 
@@ -97,6 +107,7 @@ export function SourceGraphCanvas(props: Props) {
         </nav>
       </div>
       {group ? <div aria-hidden className="pointer-events-none absolute inset-0 z-[5] shadow-[inset_0_0_140px_rgba(0,0,0,0.6)]" /> : null}
+      {props.graph?.errors.length ? <div className="absolute right-3 top-3 z-10 max-w-xs rounded border border-sev-warning/40 bg-panel/95 px-2 py-1 font-mono text-[9px] text-sev-warning">{props.graph.errors.join(" · ")}</div> : null}
       <div className="min-h-0 flex-1"><ReactFlowProvider><Flow {...props} group={group} file={file} setGroup={setGroup} setFile={setFile} /></ReactFlowProvider></div>
     </section>
   );

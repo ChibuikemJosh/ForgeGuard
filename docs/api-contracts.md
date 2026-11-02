@@ -47,7 +47,7 @@ Response `200`: `ProjectReference`
 
 Errors: `400` if the path is missing, not a directory, outside the workspace root, or uses path traversal. `403` when `FORGE_ENV=production` and `path` does not exactly match a bundled sample project.
 
-Workflow: validates and resolves the path within the configured root, assigns a stable project ID from the relative path, stores the project in memory, and returns a client-safe reference.
+Workflow: validates and resolves the path within the configured root, assigns a stable project ID from the relative path, stores the project in memory, and returns a client-safe reference. When `path` is a bundled sample, a per-visitor copy is made and the copy contains a hidden `.forge-project.json` marker (`{"source": "sample", "sample_path": ...}`); the marker is treated as a sensitive file and is never listed in the manifest, read through the file-content endpoint, or included in downloads.
 
 ### GET /api/workspace/projects/{project_id} — Implemented
 
@@ -348,10 +348,28 @@ Body: raw `.zip` bytes (`Content-Type: application/zip`, filename in `x-file-nam
 Returns `{project_id, path, content, sha256, language}` via the workspace service containment checks. Errors: `404` unknown project/file, `400` invalid path or sensitive file.
 
 ### GET /api/security/rules  (also GET /api/workspace/rules)
-Returns preset `SecurityRule[]`: `order-ownership-authorization`, `admin-role-authorization`, `invoice-ownership-authorization`.
+Returns preset `SecurityRule[]`: `order-ownership-authorization`, `admin-role-authorization`, `invoice-ownership-authorization`. Still available for curl and existing tests, but the frontend no longer calls it; the presets apply only to the sample project.
+
+### GET /api/workspace/projects/{project_id}/rules
+The endpoint the frontend uses. Returns a `ProjectRuleSet` for one project, chosen from where the project came from (recorded on disk, so it survives a backend restart):
+
+```json
+{ "project_id": "project-abc123", "source": "sample", "rule_origin": "preset",
+  "rules": [ "...the 3 presets..." ], "default_rule_id": "order-ownership-authorization" }
+```
+
+- Sample project (`source: "sample"`): `rule_origin: "preset"`, exactly the 3 preset rules, `default_rule_id: "order-ownership-authorization"`.
+- Uploaded project (`source: "upload"`): `rule_origin: "generated"`, only rules from `generate_rules(graph)`, `default_rule_id` is the first rule's ID.
+
+```json
+{ "project_id": "project-def456", "source": "upload", "rule_origin": "generated",
+  "rules": [], "default_rule_id": null }
+```
+
+- Upload with no routes or resource IDs: `rules: []` and `default_rule_id: null` (write a custom rule instead). Not rate-limited; it does not call the model. Errors: `404` unknown or expired project.
 
 ### GET /api/workspace/projects/{project_id}/generated-rules
-Returns `SecurityRule[]` derived from the project's own SourceGraph (`backend/app/services/generated_rules.py`): admin-route, per-resource ownership (routes with a `{resource}_id` parameter), and authentication rules. Empty when the project has no routes. Errors: `404` unknown project.
+Returns `SecurityRule[]` derived from the project's own SourceGraph (`backend/app/services/generated_rules.py`): admin-route, per-resource ownership (routes with a `{resource}_id` parameter), and authentication rules. Empty when the project has no routes. Errors: `404` unknown project. Still available, but the frontend no longer calls it.
 
 ### POST /api/workspace/projects/{project_id}/investigate
 Existing contract (`InvestigationResult`). Truncation of the model file listing is reported in `errors`. The last result per project is stored in memory for fix proposals.

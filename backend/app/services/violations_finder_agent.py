@@ -21,6 +21,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
@@ -369,6 +370,7 @@ class ViolationsFinderAgent:
         context_files: set[str] | None = None,
         follow_up: bool = False,
         project_id: str | None = None,
+        callbacks: list[Any] | None = None,
     ) -> list[ChatLocation]:
         """Map violation details to source locations for one session."""
         api_key = self._api_key()
@@ -410,13 +412,18 @@ class ViolationsFinderAgent:
         ]
         for filename, content in files:
             parts.append(f"\n--- File: {filename} ---\n{content}")
+        invoke_config: RunnableConfig = {
+            "configurable": {"thread_id": session_id},
+        }
+        if callbacks:
+            invoke_config["callbacks"] = callbacks
         result = self._graph.invoke(
             {
                 "messages": [HumanMessage(content="\n".join(parts))],
                 "locations": [],
                 "project_id": effective_project_id,
             },
-            config={"configurable": {"thread_id": session_id}, **({"callbacks": callbacks} if callbacks else {})},
+            config=invoke_config,
         )
         return [
             ChatLocation.model_validate(item)

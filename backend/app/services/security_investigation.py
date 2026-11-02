@@ -45,10 +45,18 @@ class SecurityInvestigationService:
 
         if recorder is None:
             recorder = InvestigationRecorder()
+        planning_id = recorder.start(
+            "planning", f"Planning investigation for {rule.rule_id}"
+        )
+        agent_step: str | None = None
         project_folder = str(self.workspace.project_root(project.project_id))
         context_files = self._plan_context_files(index, graph, rule)
         details = self._rule_text(rule, index, graph, context_files)
+        recorder.finish(planning_id, "ok", f"{len(context_files)} file(s) selected")
+        callbacks = [TraceCallbackHandler(recorder)]
         try:
+            recorder.check_cancelled()
+            agent_step = recorder.start("model", "Muse analysis")
             locations = self._find_locations(
                 agent,
                 details,
@@ -56,8 +64,13 @@ class SecurityInvestigationService:
                 investigation_id,
                 context_files,
                 project_id=project.project_id,
+                callbacks=callbacks,
             )
+            recorder.finish(agent_step, "ok")
+            agent_step = None
             if not locations and self._max_follow_up_rounds() > 0:
+                recorder.check_cancelled()
+                agent_step = recorder.start("model", "Muse follow-up analysis")
                 locations = self._find_locations(
                     agent,
                     details
@@ -68,7 +81,10 @@ class SecurityInvestigationService:
                     context_files,
                     project_id=project.project_id,
                     follow_up=True,
+                    callbacks=callbacks,
                 )
+                recorder.finish(agent_step, "ok")
+                agent_step = None
         except AgentConfigurationError as error:
             if agent_step:
                 recorder.finish(agent_step, "failed", str(error)[:300])
@@ -244,6 +260,7 @@ class SecurityInvestigationService:
         context_files,
         follow_up=False,
         project_id=None,
+        callbacks=None,
     ):
         parameters = inspect.signature(agent.find_violations).parameters
         kwargs = {}
@@ -253,6 +270,8 @@ class SecurityInvestigationService:
             kwargs["follow_up"] = follow_up
         if "project_id" in parameters:
             kwargs["project_id"] = project_id
+        if "callbacks" in parameters:
+            kwargs["callbacks"] = callbacks
         return agent.find_violations(
             details,
             project_folder,

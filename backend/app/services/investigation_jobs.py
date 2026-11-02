@@ -49,6 +49,15 @@ class InvestigationJobManager:
                 result = self._runner(project, index, graph, rule, recorder, investigation_id)
             except Exception as error:  # runner normally returns failed results
                 result = InvestigationResult(investigation_id=investigation_id, project_id=project.project_id, rule_id=rule.rule_id, status=InvestigationStatus.FAILED, errors=[str(error)[:300]], summary="Investigation failed.", steps=recorder.snapshot())
+            if recorder.cancelled and result.status is not InvestigationStatus.CANCELLED:
+                result = result.model_copy(
+                    update={
+                        "status": InvestigationStatus.CANCELLED,
+                        "findings": [],
+                        "summary": "Investigation was cancelled.",
+                        "steps": recorder.snapshot(),
+                    }
+                )
             with self._lock:
                 job["result"] = result
                 job["finished_at"] = time.time()

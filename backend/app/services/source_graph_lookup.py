@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from app.schemas.source_graph import SourceGraphNodeMatch
+from app.schemas.source_graph import SourceGraph, SourceGraphNodeMatch
 from app.services.project_workspace import WorkspaceError, WorkspaceService
 from app.services.python_indexer import PythonIndexer
 from app.services.source_graph_builder import SourceGraphBuilder
@@ -13,6 +13,85 @@ from app.services.symbol_resolution import SymbolResolver
 
 class SourceGraphLookupError(ValueError):
     """Raised when a SourceGraph lookup cannot be completed safely."""
+
+
+def match_nodes_at_location(
+    graph: SourceGraph,
+    file_path: str,
+    line_number: int,
+) -> list[SourceGraphNodeMatch]:
+    """Return graph nodes containing a validated source location.
+
+    The graph is already scoped to one registered project. Matching is based
+    only on node source ranges and structural parent edges; caller-provided
+    node IDs are never trusted.
+    """
+    normalized_path = _normalize_path(file_path)
+    if not isinstance(line_number, int) or isinstance(line_number, bool) or line_number < 1:
+        raise SourceGraphLookupError("line_number must be a positive integer.")
+
+    nodes_by_id = {node.id: node for node in graph.nodes}
+    matched_ids = {
+        node.id
+        for node in graph.nodes
+        if node.file_path == normalized_path
+        and node.source is not None
+        and node.source.line_start is not None
+        and node.source.line_end is not None
+        and node.source.line_start <= line_number <= node.source.line_end
+    }
+
+    parent_by_child: dict[str, str] = {}
+    for edge in graph.edges:
+        if edge.type in {"DEFINES", "DEFINES_METHOD", "HANDLES_ROUTE"}:
+            if edge.target in nodes_by_id and edge.source in nodes_by_id:
+                parent_by_child.setdefault(edge.target, edge.source)
+
+    result_ids = set(matched_ids)
+    result_ids.update(
+        node.id
+        for node in graph.nodes
+        if node.type == "module" and node.file_path == normalized_path
+    )
+    for node_id in tuple(matched_ids):
+        current = node_id
+        while current in parent_by_child:
+            parent_id = parent_by_child[current]
+            parent = nodes_by_id[parent_id]
+            if parent.type == "project":
+                break
+            if parent.file_path == normalized_path:
+                result_ids.add(parent_id)
+            current = parent_id
+
+    rank = {"route": 0, "method": 1, "function": 1, "class": 2, "module": 3}
+    ordered_nodes = sorted(
+        (node for node in graph.nodes if node.id in result_ids),
+        key=lambda node: (
+            rank.get(node.type, 4),
+            (
+                (node.source.line_end - node.source.line_start)
+                if node.source
+                and node.source.line_start is not None
+                and node.source.line_end is not None
+                else 10**9
+            ),
+            node.id,
+        ),
+    )
+    return [
+        SourceGraphNodeMatch(
+            node_id=node.id,
+            node_type=node.type,
+            name=node.name,
+            qualified_name=node.qualified_name,
+            file_path=node.file_path,
+            start_line=node.source.line_start if node.source else None,
+            end_line=node.source.line_end if node.source else None,
+            parent_node_id=parent_by_child.get(node.id),
+        )
+        for node in ordered_nodes
+    ]
 
 
 def _normalize_path(file_path: str) -> str:
@@ -70,56 +149,16 @@ class SourceGraphNodeLookup:
             index,
             self.resolver.resolve(index),
         )
-        nodes_by_id = {node.id: node for node in graph.nodes}
-        matched_ids = {
-            node.id
-            for node in graph.nodes
-            if node.file_path == normalized_path
+        if not any(
+            node.file_path == normalized_path
             and node.source is not None
             and node.source.line_start is not None
             and node.source.line_end is not None
             and node.source.line_start <= line_number <= node.source.line_end
-        }
-
-        parent_edges = {
-            "DEFINES",
-            "DEFINES_METHOD",
-            "HANDLES_ROUTE",
-        }
-        parent_by_child: dict[str, str] = {}
-        for edge in graph.edges:
-            if edge.type in parent_edges and edge.target in nodes_by_id:
-                parent_by_child.setdefault(edge.target, edge.source)
-
-        result_ids = set(matched_ids)
-        for node_id in tuple(matched_ids):
-            current = node_id
-            while current in parent_by_child:
-                parent_id = parent_by_child[current]
-                parent = nodes_by_id.get(parent_id)
-                if parent is None or parent.type == "project":
-                    break
-                if parent.file_path == normalized_path:
-                    result_ids.add(parent_id)
-                current = parent_id
-
-        ordered_nodes = [
-            node for node in graph.nodes
-            if node.id in result_ids
-        ]
-        return [
-            SourceGraphNodeMatch(
-                node_id=node.id,
-                node_type=node.type,
-                name=node.name,
-                qualified_name=node.qualified_name,
-                file_path=node.file_path,
-                start_line=node.source.line_start if node.source else None,
-                end_line=node.source.line_end if node.source else None,
-                parent_node_id=parent_by_child.get(node.id),
-            )
-            for node in ordered_nodes
-        ]
+            for node in graph.nodes
+        ):
+            return []
+        return match_nodes_at_location(graph, normalized_path, line_number)
 
 
 def get_nodes_on_path_python(

@@ -2,7 +2,7 @@
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Severity(str, Enum):
@@ -101,6 +101,25 @@ class SecurityRule(BaseModel):
     indicators: list[str] = Field(default_factory=list)
     guidance: str | None = None
     examples: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_rule_content(self) -> "SecurityRule":
+        if not self.rule_id.strip():
+            raise ValueError("rule_id must not be blank.")
+        text_fields = (
+            self.title,
+            self.invariant,
+            self.name,
+            self.description,
+            self.expected_property,
+            self.guidance,
+        )
+        if not any(isinstance(value, str) and value.strip() for value in text_fields):
+            if not any(item.strip() for item in (*self.concepts, *self.indicators, *self.examples)):
+                raise ValueError(
+                    "A rule must include an invariant, description, title, or other guidance."
+                )
+        return self
 
 
 class AnalysisEvidence(BaseModel):

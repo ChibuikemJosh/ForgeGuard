@@ -77,6 +77,31 @@ def test_find_violations_leaves_non_python_without_related_nodes(
     assert locations[0].relatednodes == []
 
 
+def test_find_violations_enriches_multiple_locations_independently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    proj = _project(tmp_path)
+    monkeypatch.setenv("META_MODEL_API_KEY", "test-key")
+    _patch_model(
+        monkeypatch,
+        json.dumps(
+            {
+                "violations": [
+                    {"filename": "services/orders.py", "linenumber": 2},
+                    {"filename": "services/orders.py", "linenumber": 3},
+                ]
+            }
+        ),
+    )
+
+    locations = ViolationsFinderAgent().find_violations(
+        "details", str(proj), "session-enrich-multiple"
+    )
+
+    assert len(locations) == 2
+    assert all(location.relatednodes for location in locations)
+
+
 def test_find_violations_uses_provided_project_id(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -127,4 +152,27 @@ def test_find_violations_unknown_project_id_raises(
         agent.find_violations(
             "details", str(tmp_path), "session-enrich-4",
             project_id="project-nope",
+        )
+
+
+def test_find_violations_rejects_mismatched_project_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import app.api.routers.workspace as workspace_router
+
+    root = tmp_path / "ws"
+    (root / "registered").mkdir(parents=True)
+    (root / "other").mkdir()
+    service = WorkspaceService(root)
+    reference = service.register_project("registered")
+    monkeypatch.setattr(workspace_router, "workspace_service", service)
+    monkeypatch.setenv("META_MODEL_API_KEY", "test-key")
+
+    agent = ViolationsFinderAgent()
+    with pytest.raises(WorkspaceError, match="does not match"):
+        agent.find_violations(
+            "details",
+            str(root / "other"),
+            "session-enrich-5",
+            project_id=reference.project_id,
         )

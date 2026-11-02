@@ -81,6 +81,60 @@ def test_rules_list(client_env):
     assert client.get("/api/workspace/rules").json()[0]["rule_id"]
 
 
+def test_custom_rule_is_forwarded_to_investigator(client_env, monkeypatch):
+    client, service, _ = client_env
+    pid = _open(client)
+    captured = {}
+
+    class RuleAgent:
+        last_truncated = False
+
+        def find_violations(self, details, folder, session_id):
+            captured["details"] = details
+            return []
+
+    monkeypatch.setattr(
+        wr,
+        "_investigator",
+        SecurityInvestigationService(service, agent=RuleAgent()),
+    )
+    rule = {
+        "rule_id": "transfer-limit",
+        "title": "Daily transfer limit",
+        "invariant": "A customer's daily money transfers must not exceed $2,000.",
+    }
+    response = client.post(
+        f"/api/workspace/projects/{pid}/investigate",
+        json={"rule": rule},
+    )
+    assert response.status_code == 200
+    assert "$2,000" in captured["details"]
+
+
+def test_invalid_rule_is_rejected(client_env):
+    client, _, _ = client_env
+    pid = _open(client)
+    response = client.post(
+        f"/api/workspace/projects/{pid}/investigate",
+        json={"rule": {"rule_id": "   "}},
+    )
+    assert response.status_code == 422
+
+
+def test_non_python_upload_is_rejected(client_env):
+    client, _, _ = client_env
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("README.md", "# JavaScript project\n")
+    response = client.post(
+        "/api/workspace/projects/upload",
+        content=buffer.getvalue(),
+        headers={"content-type": "application/zip", "x-file-name": "frontend.zip"},
+    )
+    assert response.status_code == 422
+    assert "no Python files" in response.json()["detail"]
+
+
 def test_source_graph_has_routes(client_env):
     client, _, _ = client_env
     pid = _open(client)

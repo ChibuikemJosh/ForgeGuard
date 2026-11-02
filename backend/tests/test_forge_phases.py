@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import zipfile
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from app.api.routers import workspace as wr
 from app.main import app
 from app.schemas.chat import ChatLocation
 from app.schemas.security_investigation import InvestigationStatus
+from app.schemas.project_fix import ProjectFixProposal
 from app.schemas.source_graph import SourceGraph, SourceGraphNode
 from app.schemas.security import SourceReference
 from app.services.investigation_trace import InvestigationRecorder, TraceCallbackHandler
@@ -302,3 +304,32 @@ def test_cleanup_ignores_missing_job_state(tmp_path):
     manager = InvestigationJobManager(lambda *_args: None)
     _cleanup_old_uploads(root, manager)
     assert not stale.exists()
+
+
+def test_cleanup_protects_recent_fix_proposals(tmp_path):
+    from app.api.routers.workspace import _cleanup_old_uploads
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    project = root / "proposal-deadbeef"
+    project.mkdir()
+    (project / "app.py").write_text("x = 1\n")
+    old = time.time() - 10 * 3600
+    os.utime(project, (old, old))
+    service = WorkspaceService(root)
+    reference = service.register_project(project.name)
+    fix = ProjectFixProposalService(service)
+    fix.proposals["proposal"] = ProjectFixProposal(
+        proposal_id="proposal",
+        project_id=reference.project_id,
+        finding_id="finding",
+        file_path="app.py",
+        expected_source_hash="hash",
+        original_content="x = 1\n",
+        proposed_content="x = 2\n",
+        unified_diff="",
+        explanation="test",
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _cleanup_old_uploads(root, proposals=fix)
+    assert project.exists()

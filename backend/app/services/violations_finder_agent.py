@@ -245,8 +245,13 @@ def _resolve_enrichment_context(
 
         try:
             workspace_service.get_project(project_id)
+            registered_folder = workspace_service.project_root(project_id)
         except WorkspaceError as error:
             raise WorkspaceError(f"Unknown project: {project_id}") from error
+        if project_folder.resolve() != registered_folder:
+            raise WorkspaceError(
+                "Project folder does not match the registered project."
+            )
         return workspace_service, project_id
     workspace = WorkspaceService(project_folder)
     reference = workspace.register_project(".")

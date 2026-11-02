@@ -100,7 +100,11 @@ def _check_rate_limit(request: Request) -> None:
     _rate_hits[ip] = hits
 
 
-def _cleanup_old_uploads(root: Path, jobs: InvestigationJobManager | None = None) -> None:
+def _cleanup_old_uploads(
+    root: Path,
+    jobs: InvestigationJobManager | None = None,
+    proposals: ProjectFixProposalService | None = None,
+) -> None:
     try:
         ttl_hours = float(os.environ.get("FORGE_UPLOAD_TTL_HOURS", "6"))
     except ValueError:
@@ -110,6 +114,8 @@ def _cleanup_old_uploads(root: Path, jobs: InvestigationJobManager | None = None
     cleanup_context = jobs.cleanup_lock() if jobs is not None else nullcontext()
     with cleanup_context:
         active_paths = jobs.active_project_paths(root) if jobs is not None else set()
+        if proposals is not None:
+            active_paths |= proposals.recent_project_paths(root, cutoff)
         try:
             entries = list(root.iterdir())
         except OSError:
@@ -146,6 +152,22 @@ class InvestigateRequest(BaseModel):
     session_id: str | None = None
 
 
+def _require_python_project(project_id: str) -> None:
+    try:
+        manifest = workspace_service.manifest(project_id)
+    except WorkspaceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if manifest.python_file_count == 0:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Unsupported project language: no Python files were found. "
+                "Forge Guard currently analyses Python projects; upload a "
+                "project containing at least one .py file."
+            ),
+        )
+
+
 
 @router.post("/projects", response_model=ProjectReference)
 def open_project(request: OpenProjectRequest) -> ProjectReference:
@@ -155,7 +177,7 @@ def open_project(request: OpenProjectRequest) -> ProjectReference:
     sample = next((s for s in SAMPLE_PROJECTS if s.path == request.path), None)
     if sample is not None:
         root = workspace_service.root
-        _cleanup_old_uploads(root, job_manager)
+        _cleanup_old_uploads(root, job_manager, fix_proposal_service)
         copy_name = f"{sample.path}-{uuid.uuid4().hex[:8]}"
         try:
             shutil.copytree(root / sample.path, root / copy_name, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", "node_modules", ".DS_Store"))
@@ -223,6 +245,7 @@ def list_files(project_id: str) -> dict:
 def get_index(project_id: str) -> CodeIndex:
     try:
         workspace_service.get_project(project_id)
+        _require_python_project(project_id)
         return _indexer.index_project(workspace_service, project_id)
     except WorkspaceError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -235,6 +258,7 @@ def get_source_graph(project_id: str) -> SourceGraph:
     """Build and return a read-only SourceGraph for a registered project."""
     try:
         reference = workspace_service.get_project(project_id)
+        _require_python_project(project_id)
         index = _indexer.index_project(workspace_service, project_id)
         resolution = _resolver.resolve(index)
         return _builder.build(reference, index, resolution)
@@ -278,6 +302,7 @@ def list_generated_rules(project_id: str) -> list[SecurityRule]:
     """
     try:
         reference = workspace_service.get_project(project_id)
+        _require_python_project(project_id)
         index = _indexer.index_project(workspace_service, project_id)
         resolution = _resolver.resolve(index)
         graph = _builder.build(reference, index, resolution)
@@ -290,6 +315,7 @@ def list_generated_rules(project_id: str) -> list[SecurityRule]:
 def get_project_rules(project_id: str) -> ProjectRuleSet:
     """The rule set for one project: presets for the sample, generated rules for uploads."""
     _project_or_404(project_id)
+    _require_python_project(project_id)
     source, _sample_path = workspace_service.project_source(project_id)
     if source == "sample":
         return ProjectRuleSet(project_id=project_id, source=source, rule_origin="preset", rules=RULE_PRESETS, default_rule_id="order-ownership-authorization")
@@ -325,7 +351,7 @@ async def upload_project(request: Request, name: str | None = Query(default=None
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as error:
         raise HTTPException(status_code=400, detail="Upload is not a valid .zip file.") from error
-    _cleanup_old_uploads(root, job_manager)
+    _cleanup_old_uploads(root, job_manager, fix_proposal_service)
     dest.mkdir(parents=True, exist_ok=False)
     try:
         for info in archive.infolist():
@@ -359,7 +385,13 @@ async def upload_project(request: Request, name: str | None = Query(default=None
             child.rename(dest / child.name)
         inner.rmdir()
     try:
-        return workspace_service.register_project(dest_name, name or stem)
+        reference = workspace_service.register_project(dest_name, name or stem)
+        try:
+            _require_python_project(reference.project_id)
+        except HTTPException:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
+        return reference
     except WorkspaceError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -393,6 +425,7 @@ def investigate_project(project_id: str, request: InvestigateRequest, http_reque
     _check_rate_limit(http_request)
     try:
         reference = workspace_service.get_project(project_id)
+        _require_python_project(project_id)
         index = _indexer.index_project(workspace_service, project_id)
         resolution = SymbolResolver().resolve(index)
         graph = SourceGraphBuilder().build(reference, index, resolution)
@@ -419,6 +452,7 @@ def start_investigation(project_id: str, request: InvestigateRequest, http_reque
     _check_rate_limit(http_request)
     try:
         reference = workspace_service.get_project(project_id)
+        _require_python_project(project_id)
         index = _indexer.index_project(workspace_service, project_id)
         resolution = SymbolResolver().resolve(index)
         graph = SourceGraphBuilder().build(reference, index, resolution)

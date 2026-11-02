@@ -98,12 +98,11 @@ export async function zipFolder(files: File[]): Promise<ZippedFolder> {
   const kept: File[] = [];
   let skippedCount = 0;
   for (const file of files) {
-    const parts = relativePath(file).split("/");
+    const path = relativePath(file);
+    const parts = path.split("/");
     const dirs = parts.slice(0, -1);
-    if (dirs.some((d) => IGNORED_DIRECTORIES.has(d)) || parts[parts.length - 1] === ".DS_Store" || isSensitive(parts[parts.length - 1]) || file.size > MAX_FILE_BYTES) {
-      skippedCount++;
-      continue;
-    }
+    const name = parts[parts.length - 1];
+    if (name === ".DS_Store" || dirs.some((d) => IGNORED_DIRECTORIES.has(d)) || isSensitive(name) || file.size > MAX_FILE_BYTES) { skippedCount++; continue; }
     kept.push(file);
   }
   if (kept.length === 0) throw new Error("No uploadable files in the selected folder (everything was ignored, sensitive, or over 1 MB).");

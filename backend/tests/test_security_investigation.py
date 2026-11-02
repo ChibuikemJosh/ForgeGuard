@@ -217,7 +217,8 @@ def test_investigation_maps_class_locations_to_graph_nodes(tmp_path):
 
     class_id = index.classes[0].id
     assert result.findings[0].affected_symbols == [class_id]
-    assert result.findings[0].related_graph_nodes == [class_id]
+    assert result.findings[0].related_graph_nodes[0] == class_id
+    assert result.findings[0].evidence[0].node_matches[0].node_id == class_id
 
 
 def test_investigation_plans_graph_context_and_deduplicates_locations(tmp_path):

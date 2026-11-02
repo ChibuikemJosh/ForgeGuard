@@ -5,9 +5,9 @@ export function LandingNav() {
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-coal/95">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-5">
-        <Link to="/" className="flex items-baseline gap-2.5" aria-label="Forge home">
-          <span className="grid size-7 translate-y-0.5 place-items-center self-center rounded-sm bg-ember font-mono text-[13px] font-bold text-white">F</span>
-          <span className="text-[19px] font-black tracking-tight">Forge</span>
+        <Link to="/" className="flex items-center gap-2.5" aria-label="ForgeGuard home">
+          <img src="/favicon.svg" alt="" className="size-7 self-center rounded-sm" />
+          <span className="text-[19px] font-normal tracking-tight">ForgeGuard</span>
         </Link>
         <nav className="ml-auto hidden items-center gap-6 text-[15px] font-medium text-zinc-300 sm:flex" aria-label="Primary">
           {NAV_LINKS.map((item) => (

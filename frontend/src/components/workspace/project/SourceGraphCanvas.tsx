@@ -32,20 +32,30 @@ function Flow(props: Props & { group: string | null; file: string | null; setGro
   const { fitView } = useReactFlow();
   useEffect(() => { setNodes(scene.nodes as never[]); setEdges(scene.edges); }, [scene, setNodes, setEdges]);
   useEffect(() => {
-    const t = window.setTimeout(() => {
-      if (props.file) void fitView({ nodes: [{ id: SYMBOL_CONTAINER }, { id: FOCUS_CONTAINER }], padding: 0.16, duration: 700, maxZoom: 1.1 });
-      else if (props.group) void fitView({ nodes: [{ id: `group:${props.group}` }, { id: FOCUS_CONTAINER }], padding: 0.18, duration: 700, maxZoom: 1.1 });
-      else void fitView({ padding: 0.22, duration: 700, maxZoom: 1 });
-    }, 60);
-    return () => window.clearTimeout(t);
-  }, [props.group, props.file, fitView]);
+    let raf2 = 0;
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        if (props.file) void fitView({ nodes: [{ id: SYMBOL_CONTAINER }], padding: 0.12, duration: 700, maxZoom: 1 });
+        else if (props.group) void fitView({ nodes: [{ id: `group:${props.group}` }, { id: FOCUS_CONTAINER }], padding: 0.28, duration: 700, maxZoom: 1 });
+        else void fitView({ padding: 0.22, duration: 700, maxZoom: 1 });
+      });
+    });
+    return () => { window.cancelAnimationFrame(raf1); window.cancelAnimationFrame(raf2); };
+  }, [props.group, props.file, scene.nodes.length, fitView]);
 
   const handleClick: NodeMouseHandler = useCallback((_e, node) => {
     if (node.type !== "graphCard" || !props.graph) return;
-    if (node.id.startsWith("group:")) { props.setGroup(node.id.slice(6)); props.setFile(null); return; }
+    if (node.id.startsWith("group:")) {
+      const key = node.id.slice(6);
+      if (props.group !== key) { props.setGroup(key); props.setFile(null); }
+      return;
+    }
     const src = props.graph.nodes.find((n) => n.id === node.id);
     if (!src) return;
-    if (src.type === "module" && src.file_path) { props.setFile(src.file_path); props.onSelectFile(src.file_path); return; }
+    if (src.type === "module" && src.file_path) {
+      if (props.file !== src.file_path) { props.setFile(src.file_path); props.onSelectFile(src.file_path); }
+      return;
+    }
     props.onSelectNode(node.id);
   }, [props]);
 

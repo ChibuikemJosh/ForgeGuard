@@ -24,6 +24,7 @@ export function ProjectPicker({ samples, busy, onUseSample, onUploadFolder }: Pr
         <button type="button" disabled={busy} onClick={() => folderRef.current?.click()} className={secondaryButton}>
           Upload project folder<span className="block font-mono text-[9px] text-zinc-500">Zipped in your browser; .git, node_modules, venvs and .env files are skipped.</span>
         </button>
+        <p className="text-[11px] leading-relaxed text-zinc-500">Your Python files are sent to the Meta Muse model for analysis. Folder uploads up to 10 MB; .git, virtual environments, node_modules and .env/sensitive files are skipped. Hosted copies expire after a few hours.</p>
       </div>
     </section>
   );

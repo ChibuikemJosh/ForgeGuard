@@ -18,7 +18,7 @@ export type GraphCardFlowNode = Node<GraphCardData, "graphCard">;
 export const GraphCardNode = memo(function GraphCardNode({ data, selected }: NodeProps<GraphCardFlowNode>) {
   const isLayer = data.variant === "layer";
   return (
-    <div className={`${isLayer ? "w-52.5" : "w-54.5"} rounded-lg border bg-panel-2 px-3.5 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.45)] transition-[opacity,filter] duration-500 ${selected ? "border-ember-bright shadow-[0_0_0_1px_var(--color-ember),0_12px_32px_rgba(0,0,0,0.5)]" : "border-line hover:border-zinc-600"} ${data.glow ? "ring-2 ring-sev-critical/80 border-sev-critical/60" : ""} ${data.dimmed ? "opacity-25 saturate-50" : "opacity-100"}`}>
+    <div className={`h-[118px] w-[218px] overflow-hidden rounded-lg border bg-panel-2 px-3.5 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.45)] transition-[opacity,filter] duration-500 ${selected ? "border-ember-bright shadow-[0_0_0_1px_var(--color-ember),0_12px_32px_rgba(0,0,0,0.5)]" : "border-line hover:border-zinc-600"} ${data.glow ? "ring-2 ring-sev-critical/80 border-sev-critical/60" : ""} ${data.dimmed ? "opacity-25 saturate-50" : "opacity-100"}`}>
       <Handle type="target" position={Position.Top} className="!size-2 !border-line !bg-zinc-500" />
       <div className="flex items-baseline justify-between gap-2">
         <span className={`font-mono text-[9px] font-semibold tracking-[0.16em] ${isLayer ? "text-ember-bright" : "text-ide-blue"}`}>{data.eyebrow}</span>

@@ -1,15 +1,18 @@
 import { useState } from "react";
 import type { ProjectFixProposal } from "../../../features/project/types";
 import { DiffViewer } from "../shared/DiffViewer";
+import { SideBySideDiff } from "../shared/DiffCompare";
+import { addedLinesFromDiff } from "../shared/diffLines";
 import { AiInlinePulse } from "../AiLoading";
 
 interface Props {
   hasFinding: boolean; proposal: ProjectFixProposal | null; busy: boolean; phase: string;
   onGenerate: (instructions: string) => void; onReview: (d: "approved" | "rejected", reviewer: string) => void;
   onApply: () => void; onRollback: () => void; onRerun: () => void;
+  canGenerate?: boolean; wide?: boolean; highlightLine?: number | null;
 }
 
-export function FixPanel({ hasFinding, proposal, busy, phase, onGenerate, onReview, onApply, onRollback, onRerun }: Props) {
+export function FixPanel({ hasFinding, proposal, busy, phase, onGenerate, onReview, onApply, onRollback, onRerun, canGenerate = true, wide = false, highlightLine = null }: Props) {
   const [instructions, setInstructions] = useState("");
   const [reviewer, setReviewer] = useState("");
   const input = "w-full rounded border border-line bg-panel-2 px-2 py-1.5 text-[11px] text-zinc-100 focus-visible:outline-2 focus-visible:outline-ide-blue";
@@ -26,13 +29,15 @@ export function FixPanel({ hasFinding, proposal, busy, phase, onGenerate, onRevi
           <label className="mt-2 block text-[11px] text-zinc-300">Ask Muse for a fix (optional instructions)
             <textarea className={`${input} mt-1`} rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="e.g. return 403 for non-owners" />
           </label>
-          {showGenerate ? <button type="button" disabled={busy} onClick={() => onGenerate(instructions)} className={`${btn} mt-2 w-full bg-ember font-semibold text-white hover:bg-ember-soft`}>{phase === "proposing_fix" ? <AiInlinePulse label="Generating fix…" /> : "Generate fix"}</button> : null}
+          {!canGenerate ? <p className="mt-2 text-[11px] text-sev-warning">Fixes need at least one validated evidence location.</p> : null}
+          {showGenerate ? <button type="button" disabled={busy || !canGenerate} onClick={() => onGenerate(instructions)} className={`${btn} mt-2 w-full bg-ember font-semibold text-white hover:bg-ember-soft`}>{phase === "proposing_fix" ? <AiInlinePulse label="Generating fix…" /> : "Generate fix"}</button> : null}
           {proposal ? (
             <div className="mt-3 flex flex-col gap-2">
               <p className="font-mono text-[9px] text-zinc-500">{proposal.file_path} · review: {proposal.review_status} · apply: {proposal.application_status} · rollback: {String(proposal.rollback_available)}</p>
               <p className="text-[11px] leading-relaxed text-zinc-300">{proposal.explanation}</p>
               {proposal.error ? <p className="font-mono text-[10px] text-sev-warning">{proposal.error}</p> : null}
-              <DiffViewer diff={proposal.unified_diff} />
+              {wide ? <div className="max-h-[480px]"><p className="mb-1 font-mono text-[9px] text-zinc-500">AI proposal · review status: {proposal.review_status}</p><SideBySideDiff before={proposal.original_content} after={proposal.proposed_content} highlight={highlightLine ? { start: highlightLine, end: highlightLine } : null} added={addedLinesFromDiff(proposal.unified_diff)} /></div> : null}
+              <details><summary className="cursor-pointer font-mono text-[10px] text-ember-bright">Unified diff</summary><div className="mt-1"><DiffViewer diff={proposal.unified_diff} /></div></details>
               {showReview ? (
                 <>
                   <input className={input} placeholder="Reviewer name (human)" value={reviewer} onChange={(e) => setReviewer(e.target.value)} aria-label="Reviewer name" />

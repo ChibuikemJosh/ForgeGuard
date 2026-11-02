@@ -47,7 +47,7 @@ Response `200`: `ProjectReference`
 
 Errors: `400` if the path is missing, not a directory, outside the workspace root, or uses path traversal. `403` when `FORGE_ENV=production` and `path` does not exactly match a bundled sample project.
 
-Workflow: validates and resolves the path within the configured root, assigns a stable project ID from the relative path, stores the project in memory, and returns a client-safe reference.
+Workflow: validates and resolves the path within the configured root, assigns a stable project ID from the relative path, stores the project in memory, and returns a client-safe reference. When `path` is a bundled sample, a per-visitor copy is made and the copy contains a hidden `.forge-project.json` marker (`{"source": "sample", "sample_path": ...}`); the marker is treated as a sensitive file and is never listed in the manifest, read through the file-content endpoint, or included in downloads.
 
 ### GET /api/workspace/projects/{project_id} — Implemented
 
@@ -294,6 +294,27 @@ Integration note: AI-generated findings are returned as `potential` unless all e
 
 Investigation results may report `truncated: true` when the Meta Muse context omitted files or source content due to investigation limits. In that case, `summary` also notes that project context was truncated.
 
+#### Sample copies, node matches, steps, and downloads
+
+- Opening a sample project (`POST /api/workspace/projects` with a sample `path`) returns a **per-visitor copy** (`orders-api-<8 hex>`); the tracked sample folder is never modified. Copies expire via `FORGE_UPLOAD_TTL_HOURS`.
+- Each valid `EvidenceItem` carries `node_matches: SourceGraphNodeMatch[]` computed by the backend with `match_nodes_at_location` (narrowest first: route/method/function, class, module). Agent `relatednodes` are hints checked against the graph and the evidence file. Graph mapping failures appear in `errors` as `Graph node mapping failed for {file}:{line}: ...` and never fail the investigation.
+- `InvestigationResult.steps: InvestigationStep[]` is a truthful backend trace (`planning|model|tool|validation|mapping`, status `running|ok|failed|skipped`). Steps may contain file paths, line numbers, counts, and error text truncated to 300 characters — never source code, prompts, or full model output.
+- Statuses include `running` and `cancelled` in addition to `completed`, `failed`, and `inconclusive`.
+
+#### Background investigation jobs
+
+- `POST /api/workspace/projects/{project_id}/investigations` → `202 {"investigation_id", "status": "running"}`. Rate-limited like other AI endpoints. One running job per client IP; a second start returns `409`.
+- `GET /api/workspace/investigations/{investigation_id}` → `InvestigationResult` (`running` with live `steps`, then the final result). **Not rate-limited.** Unknown ID → `404`.
+- `POST /api/workspace/investigations/{investigation_id}/cancel` → current `InvestigationResult`; cancellation takes effect at the next step/model/tool boundary and yields status `cancelled`. **Not rate-limited.**
+- `POST /api/workspace/projects/{project_id}/investigate` (synchronous) remains available and also returns `steps`.
+
+#### Applied fixes and downloads
+
+- `GET /api/workspace/projects/{project_id}/applied-fixes` → `list[ProjectFixProposal]` (each with `applied_at`). Unknown project → `404`.
+- `GET /api/workspace/projects/{project_id}/changes.patch` → `text/x-diff` attachment (`<name>-forge-fixes.patch`) built with `a/`/`b/` prefixes so `git apply` works. Nothing applied → `409 "No applied fixes to download."`
+- `GET /api/workspace/projects/{project_id}/download` → `application/zip` attachment (`<name>-forge.zip`) of the project copy via `iter_files` (sensitive/oversized files excluded), plus `FORGE_CHANGES.md` listing applied fixes. Allowed with nothing applied.
+- If the project copy no longer exists, downloads return `404 "This project copy has expired. Re-upload the project folder."` Downloads are **not rate-limited**.
+
 
 ## Status values
 
@@ -327,7 +348,28 @@ Body: raw `.zip` bytes (`Content-Type: application/zip`, filename in `x-file-nam
 Returns `{project_id, path, content, sha256, language}` via the workspace service containment checks. Errors: `404` unknown project/file, `400` invalid path or sensitive file.
 
 ### GET /api/security/rules  (also GET /api/workspace/rules)
-Returns preset `SecurityRule[]`: `order-ownership-authorization`, `admin-role-authorization`, `invoice-ownership-authorization`.
+Returns preset `SecurityRule[]`: `order-ownership-authorization`, `admin-role-authorization`, `invoice-ownership-authorization`. Still available for curl and existing tests, but the frontend no longer calls it; the presets apply only to the sample project.
+
+### GET /api/workspace/projects/{project_id}/rules
+The endpoint the frontend uses. Returns a `ProjectRuleSet` for one project, chosen from where the project came from (recorded on disk, so it survives a backend restart):
+
+```json
+{ "project_id": "project-abc123", "source": "sample", "rule_origin": "preset",
+  "rules": [ "...the 3 presets..." ], "default_rule_id": "order-ownership-authorization" }
+```
+
+- Sample project (`source: "sample"`): `rule_origin: "preset"`, exactly the 3 preset rules, `default_rule_id: "order-ownership-authorization"`.
+- Uploaded project (`source: "upload"`): `rule_origin: "generated"`, only rules from `generate_rules(graph)`, `default_rule_id` is the first rule's ID.
+
+```json
+{ "project_id": "project-def456", "source": "upload", "rule_origin": "generated",
+  "rules": [], "default_rule_id": null }
+```
+
+- Upload with no routes or resource IDs: `rules: []` and `default_rule_id: null` (write a custom rule instead). Not rate-limited; it does not call the model. Errors: `404` unknown or expired project.
+
+### GET /api/workspace/projects/{project_id}/generated-rules
+Returns `SecurityRule[]` derived from the project's own SourceGraph (`backend/app/services/generated_rules.py`): admin-route, per-resource ownership (routes with a `{resource}_id` parameter), and authentication rules. Empty when the project has no routes. Errors: `404` unknown project. Still available, but the frontend no longer calls it.
 
 ### POST /api/workspace/projects/{project_id}/investigate
 Existing contract (`InvestigationResult`). Truncation of the model file listing is reported in `errors`. The last result per project is stored in memory for fix proposals.

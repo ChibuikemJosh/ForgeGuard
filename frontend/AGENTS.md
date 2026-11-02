@@ -163,17 +163,18 @@ src/hooks/useProjectWorkflow.ts   # useReducer machine; opening a project
                                   # (sample or folder upload) auto-fetches
                                   # manifest then SourceGraph — no Analyze click
 src/features/project/
-├── types.ts                      # Project/manifest/SourceGraph/investigation types (+ ApiLogEntry)
+├── types.ts                      # Project/manifest/SourceGraph/investigation types
 ├── tree.ts                       # Explorer tree from manifest paths; folderColor()
-├── graphLevels.ts                # Deterministic grouping + dagre positions
-└── graphScene.ts                 # Builds the 3-level React Flow scene
+├── graphLevels.ts                # Deterministic grouping + dagre positions (generous nodesep/ranksep)
+├── graphScene.ts                 # Builds the 3-level React Flow scene
+└── zipFolder.ts                  # Folder → zip; returns { zip, fileCount, skippedCount }
 src/components/workspace/
-├── TitleBar.tsx                  # FORGE (home), real project name, Change project, panel toggles
+├── TitleBar.tsx                  # FORGE (home), real project name, Change project, left and right panel toggles only
 ├── StatusBar.tsx                 # Real values only: backend, project, file, investigation, review/apply
 ├── WorkflowStepper.tsx           # Generic stepper (steps prop, layoutId ember pill)
 ├── AiLoading.tsx                 # AiLoading (graph parsing) + AiInlinePulse (Muse calls)
 ├── ResizeHandle.tsx              # Panel sashes (shared)
-├── shared/                       # DiffViewer, DiffCompare, ShikiLines, PlainLines
+├── shared/                       # DiffViewer, DiffCompare (SideBySideDiff), diffLines, ShikiLines, PlainLines
 └── project/
     ├── ProjectPicker.tsx         # Sample button + "Upload project folder"
     ├── ProjectExplorer.tsx       # Overview-style tree (react-icons, badges) from the manifest
@@ -181,9 +182,14 @@ src/components/workspace/
     ├── SourceGraphCanvas.tsx     # 3-level drill-down canvas (see below)
     ├── GraphCardNode.tsx         # memo card node: eyebrow/name/desc/meta, ember select, finding badge
     ├── ProjectCodeViewer.tsx     # Shiki viewer, opens at finding/node line
-    ├── RulePanel.tsx             # Rule presets + custom; "Run AI investigation"
+    ├── RulePanel.tsx             # Per-project rules (preset/generated) + custom; "Run AI investigation"
+    ├── AgentActivity.tsx         # Live backend step timeline (aria-live, never invented steps)
     ├── FindingsPanel.tsx         # Findings, backend status word-for-word ("potential")
     └── FixPanel.tsx              # Generate → approve/reject → apply → rollback → re-run
+├── WorkspaceTabs.tsx             # Investigate / Changes top-level tabs (role=tablist)
+└── changes/
+    └── ChangesView.tsx           # Changes tab: finding header, wide FixPanel + SideBySideDiff,
+                                  # applied-fixes list, .patch/.zip downloads
 ```
 
 ### Graph: 3 deterministic levels (no invented data)
@@ -218,13 +224,50 @@ approved/rejected) → Apply (fix applied, rollback available) → Verify
 (investigation re-run after apply; backend summary shown word-for-word).
 `current`/`maxReached` derive only from `useProjectWorkflow` state;
 clicking a reachable step only focuses a panel, never fakes progress.
+Steps 1–4 (Load–Understand) switch to the **Investigate** tab; steps 5–7
+(Review–Verify) switch to the **Changes** tab. The workspace has two tabs
+(`WorkspaceTabs`, `role="tablist"`): Investigate (graph/code/split +
+RulePanel, AgentActivity, FindingsPanel, "Propose a fix →") and Changes
+(`ChangesView`). All state stays in `useProjectWorkflow` on the same page —
+no route change. Investigations run as backend jobs: the hook polls
+`GET /api/workspace/investigations/{id}` every 1.5s, shows live `steps` in
+`AgentActivity`, and cancels via the cancel endpoint. Selecting a finding
+opens the narrowest `node_matches` node; graph highlighting uses only
+matched/related nodes, falling back to affected files only when both are empty.
+
+### Layout (no bottom panel)
+
+The workspace layout is: title bar, then left Explorer, centre
+Graph/Code/Split (or the Changes tab), and right sidebar, then status
+bar, with no bottom panel. The centre column fills the full height so
+the graph and code area reaches down to the status bar.
+`AgentActivity` sits in the Investigate sidebar between `RulePanel`
+and `FindingsPanel`, updating live during a run. Graph parse errors
+show as a warning overlay in the top-right of the graph; investigation
+errors appear in `FindingsPanel` (for failed runs the first error is
+shown by the status callout and not repeated in the list).
+
+### Rules
+
+Rules are loaded per project from `GET /api/workspace/projects/{id}/rules`:
+the sample project gets the 3 preset demo rules, and uploaded projects
+get only rules generated from their own routes and resource IDs
+(`services/generated_rules.py`; ownership, admin, authentication),
+labelled “Generated for your project” in `RulePanel`. A custom rule is
+the fallback for both, and the only option when an upload has no routes. The `?` button at
+the top-right of the rules widget shows a hover/focus pop-up explaining
+what a rule is and how investigation uses it. Layout stays generous in
+the graph: `dagrePositions` uses wide `nodesep`/`ranksep` so nodes and
+edge labels do not crowd in large codebases.
 
 ### Auto-analyze & truthfulness
 
 Opening a project immediately fetches manifest → SourceGraph and shows
 Level 0 with a "Parsing project and building graph…" loading animation
-(`AiLoading`); backend errors show word-for-word with Retry. The rule
-defaults to the order-ownership preset. Findings, errors and summaries
+(`AiLoading`); backend errors show word-for-word with Retry. The selected
+rule is the rule set's `default_rule_id` for the opened project (the
+order-ownership preset for the sample, the first generated rule for an
+upload, or none). Findings, errors and summaries
 show backend wording verbatim; exactly one ember primary button at a time.
 AI waits use `AiLoading`/`AiInlinePulse` (Motion, reduced-motion safe).
 

@@ -77,7 +77,9 @@ export function dagrePositions(
   w = 218, h = 118,
 ): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "TB", nodesep: 36, ranksep: 52, marginx: 12, marginy: 12 });
+  // Generous separation so cards and edge labels never crowd each other,
+  // even in large codebases: wide sibling gaps, tall rank gaps, outer margin.
+  g.setGraph({ rankdir: "TB", nodesep: 90, ranksep: 110, marginx: 48, marginy: 48 });
   g.setDefaultEdgeLabel(() => ({}));
   const idSet = new Set(ids);
   ids.forEach((id) => g.setNode(id, { width: w, height: h }));
@@ -86,7 +88,7 @@ export function dagrePositions(
   const map = new Map<string, { x: number; y: number }>();
   ids.forEach((id, i) => {
     const p = g.node(id) as { x: number; y: number } | undefined;
-    map.set(id, p ? { x: p.x - w / 2, y: p.y - h / 2 } : { x: (i % 3) * (w + 40), y: Math.floor(i / 3) * (h + 40) });
+    map.set(id, p ? { x: p.x - w / 2, y: p.y - h / 2 } : { x: (i % 3) * (w + 90), y: Math.floor(i / 3) * (h + 90) });
   });
   return map;
 }

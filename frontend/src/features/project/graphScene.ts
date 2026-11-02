@@ -5,6 +5,15 @@ import { aggregateEdges, buildGroups, dagrePositions, groupKeyForPath, symbolsIn
 
 export const FOCUS_CONTAINER = "focus-container";
 export const SYMBOL_CONTAINER = "symbol-container";
+const CARD_W = 218;
+const CARD_H = 118;
+const PAD = 36;
+/** Container size + centred inset: extra space from any minimum size is split evenly on both sides. */
+function frame(spanX: number, spanY: number) {
+  const width = Math.max(280, spanX + CARD_W + PAD * 2);
+  const height = Math.max(182, spanY + CARD_H + PAD * 2);
+  return { width, height, padX: (width - spanX - CARD_W) / 2, padY: (height - spanY - CARD_H) / 2 };
+}
 const edgeLabel = { fill: "#d6a05a", fontSize: 10, fontFamily: "JetBrains Mono, monospace" } as const;
 export type SceneNode = GraphCardFlowNode | Node;
 
@@ -64,21 +73,21 @@ export function buildScene(graph: SourceGraph, focus: SceneFocus, ctx: SceneCont
   const fileAgg = aggregateEdges(graph, (n) => (n.file_path && focused.filePaths.includes(n.file_path) ? focused.files.find((f) => f.file_path === n.file_path)?.id ?? null : null), new Set(fileIds));
   const localPos = dagrePositions(fileIds, fileAgg, 218, 118);
   const xs = fileIds.map((id) => localPos.get(id)?.x ?? 0); const ys = fileIds.map((id) => localPos.get(id)?.y ?? 0);
-  const cW = Math.max(280, (Math.max(...xs, 0) - Math.min(...xs, 0)) + 218 + 48);
-  const cH = Math.max(180, (Math.max(...ys, 0) - Math.min(...ys, 0)) + 118 + 72);
+  const spanX = Math.max(...xs) - Math.min(...xs); const spanY = Math.max(...ys) - Math.min(...ys);
+  const { width: cW, height: cH, padX, padY } = frame(spanX, spanY);
   const home = homePos.get(groupId(focused.key)) ?? { x: 0, y: 0 };
   const container: Node = {
-    id: FOCUS_CONTAINER, type: "group", position: { x: home.x - 20, y: home.y + 132 }, draggable: false, selectable: false, focusable: false, zIndex: 1,
+    id: FOCUS_CONTAINER, type: "group", position: { x: home.x + CARD_W / 2 - cW / 2, y: home.y + CARD_H + PAD }, draggable: false, selectable: false, focusable: false, zIndex: 1,
     style: { width: cW, height: cH, backgroundColor: "rgba(19,19,21,0.82)", border: "1px solid #4a3b28", borderRadius: 12, boxShadow: "0 24px 60px rgba(0,0,0,0.55)" }, data: {},
   };
-  const minX = Math.min(...xs, 0); const minY = Math.min(...ys, 0);
+  const minX = Math.min(...xs); const minY = Math.min(...ys);
   const fileNodes: GraphCardFlowNode[] = focused.files.map((f) => {
     const p = localPos.get(f.id) ?? { x: 0, y: 0 };
     const fc = ctx.findingFiles.get(f.file_path ?? "") ?? 0;
     const syms = symbolsInFile(graph, f.file_path ?? "");
     return {
       id: f.id, type: "graphCard", parentId: FOCUS_CONTAINER, extent: "parent",
-      position: { x: p.x - minX + 24, y: p.y - minY + 40 }, zIndex: 3,
+      position: { x: p.x - minX + padX, y: p.y - minY + padY }, zIndex: 3,
       selected: focus.file === f.file_path || ctx.selectedFile === f.file_path,
       data: {
         variant: "file", eyebrow: "FILE", name: f.file_path?.split("/").pop() ?? f.name,
@@ -124,18 +133,19 @@ export function buildScene(graph: SourceGraph, focus: SceneFocus, ctx: SceneCont
   const symEdgesRaw = graph.edges.filter((e) => e.target && symIds.has(e.source) && symIds.has(e.target) && ["CALLS", "DEFINES", "HANDLES_ROUTE", "DEFINES_METHOD"].includes(e.type));
   const symPos = dagrePositions(symbols.map((s) => s.id), symEdgesRaw.map((e) => ({ source: e.source, target: e.target as string })), 218, 118);
   const sxs = symbols.map((s) => symPos.get(s.id)?.x ?? 0); const sys = symbols.map((s) => symPos.get(s.id)?.y ?? 0);
-  const sMinX = Math.min(...sxs, 0); const sMinY = Math.min(...sys, 0);
+  const sMinX = Math.min(...sxs); const sMinY = Math.min(...sys);
   const focusedFileNode = fileNodes.find((f) => f.data.desc === focus.file);
+  const sym = frame(Math.max(...sxs) - sMinX, Math.max(...sys) - sMinY);
   const symContainer: Node = {
-    id: SYMBOL_CONTAINER, type: "group", position: { x: container.position.x + (focusedFileNode?.position.x ?? 24) - 12, y: container.position.y + cH + 16 },
+    id: SYMBOL_CONTAINER, type: "group", position: { x: container.position.x + (focusedFileNode?.position.x ?? sym.padX) + CARD_W / 2 - sym.width / 2, y: container.position.y + cH + 24 },
     draggable: false, selectable: false, focusable: false, zIndex: 1,
-    style: { width: Math.max(280, (Math.max(...sxs, 0) - sMinX) + 218 + 48), height: Math.max(180, (Math.max(...sys, 0) - sMinY) + 118 + 72), backgroundColor: "rgba(19,19,21,0.88)", border: "1px solid #4a3b28", borderRadius: 12, boxShadow: "0 24px 60px rgba(0,0,0,0.55)" }, data: {},
+    style: { width: sym.width, height: sym.height, backgroundColor: "rgba(19,19,21,0.88)", border: "1px solid #4a3b28", borderRadius: 12, boxShadow: "0 24px 60px rgba(0,0,0,0.55)" }, data: {},
   };
   const symNodes: GraphCardFlowNode[] = symbols.map((s) => {
     const p = symPos.get(s.id) ?? { x: 0, y: 0 };
     return {
       id: s.id, type: "graphCard", parentId: SYMBOL_CONTAINER, extent: "parent",
-      position: { x: p.x - sMinX + 24, y: p.y - sMinY + 40 }, zIndex: 4, selected: ctx.selectedNodeId === s.id,
+      position: { x: p.x - sMinX + sym.padX, y: p.y - sMinY + sym.padY }, zIndex: 4, selected: ctx.selectedNodeId === s.id,
       data: {
         variant: "symbol", eyebrow: s.type.toUpperCase(), name: s.name,
         desc: s.qualified_name ?? s.file_path ?? "", meta: s.source?.line_start ? `line ${s.source.line_start}` : (s.file_path ?? ""),

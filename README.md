@@ -28,14 +28,14 @@ violations can be traced to real files, symbols, and graph nodes.
 
 ## Core user workflow
 
-1. Register a Python project.
-2. Index its source and generate its SourceGraph.
-3. Provide a security or business rule.
-4. Run an investigation.
-5. Review findings and validated source evidence.
-6. Ask for explanations or proposed corrections through chat.
-7. Review any correction before application.
-8. Re-run the investigation after a correction.
+1. Upload a Python project folder (or open the sample — each visitor gets their own copy).
+2. Index its source and generate its SourceGraph (Map).
+3. Provide a security or business rule and run an investigation, watching live agent activity. The sample project uses the 3 demo preset rules; an uploaded project gets only rules generated from its own routes and resource IDs, or a custom rule you write.
+4. Understand findings and validated source evidence with SourceGraph node matches.
+5. Review the proposed fix side-by-side on the Changes tab; approve or reject it.
+6. Apply the fix, or roll it back.
+7. Re-run the investigation to verify.
+8. Download your fixes as a `.patch` (apply with `git apply`) or download the project copy as a `.zip`.
 
 ## Architecture overview
 
@@ -167,7 +167,11 @@ No database, Redis, or production authentication infrastructure is implemented.
 Workflow: Select project (SourceGraph builds automatically) → Select rule → Run AI
 investigation (Meta Muse model) → View findings → Explore graph → AI-assisted
 fix → Review → Apply / Rollback. AI findings are shown as **Potential** (the
-backend status verbatim), never Confirmed.
+backend status verbatim), never Confirmed. Rules are loaded per project: the
+sample project shows the 3 demo preset rules (defaulting to order ownership),
+while uploaded projects show only rules generated from their own routes and
+resource IDs — an upload with no routes gets no generated rules, so write a
+custom rule there.
 
 Meta Model API config (`backend/.env`, never in the frontend):
 
@@ -200,11 +204,7 @@ The bundled sample project lives at `backend/workspaces/orders-api/`; use the
 folder from the same picker (folders are zipped in the browser,
 skipping `.git`/`node_modules`/venvs/`.env`; the zip is extracted safely on the backend,
 sensitive files are skipped, code is parsed with `ast` and never executed).
-Reset the sample after applying fixes:
-
-```bash
-git checkout backend/workspaces/orders-api
-```
+Opening the sample copies it per visitor (`orders-api-<id>`), so applying a fix never changes the tracked sample or another visitor's copy. Old copies are cleaned up after `FORGE_UPLOAD_TTL_HOURS` (default 6).
 
 ### Curl smoke test
 
@@ -226,6 +226,9 @@ No authentication by design. Projects are lost on browser refresh or backend res
 
 - **Backend (Render / Railway, native Python service):** root directory `backend/`, build command `pip install -r requirements.txt`, start command
   `uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
-  (no `--reload`, no extra workers; `--proxy-headers` lets the per-IP rate limit see real client IPs behind the host's proxy). Set `META_MODEL_API_KEY`, `META_MODEL_BASE_URL`, `META_MODEL_NAME`, `FORGE_ENV=production`, and `FORGE_CORS_ORIGINS=https://<frontend-domain>`. Run a **single instance** (state is in memory).
+  (no `--reload`, no `--workers`, and no process manager that starts multiple workers; `--proxy-headers` lets the per-IP rate limit see real client IPs behind the host's proxy). Set `META_MODEL_API_KEY`, `META_MODEL_BASE_URL`, `META_MODEL_NAME`, `FORGE_ENV=production`, `FORGE_CORS_ORIGINS=https://<frontend-domain>`, and `FORGE_WORKSPACE_ROOT` to a persistent mounted directory. Run exactly **one backend instance and one Uvicorn worker** because jobs, findings, proposals, and the active-project registry are in memory.
 - **Frontend (Vercel / Netlify):** root directory `frontend/`, build command `npm run build`, output `dist`; set `VITE_API_BASE_URL=https://<backend-domain>` at build time.
-- In production only sample projects can be opened by path, the legacy security demo apply/rollback are disabled, and AI endpoints are rate-limited per IP (10/hour).
+- In production only sample projects can be opened by path, the legacy security demo apply/rollback are disabled, and AI endpoints are rate-limited per IP (10/hour). Polling, cancelling, and downloads are not rate-limited.
+- Project files are stored under `FORGE_WORKSPACE_ROOT` (default: `backend/workspaces`) and can be recovered after a process restart only when that directory is on persistent host storage. A container filesystem or ephemeral hosting disk does not guarantee survival across redeployments.
+- Cleanup skips project directories with queued or running investigations and only removes age-expired inactive copies. Missing job state after a restart is treated as inactive because the process no longer has a running job to protect.
+- Investigation jobs, findings, proposals, rollback data, and the active-job registry remain in memory. They are lost on restart; downloads then return "This project copy has expired. Re-upload the project folder." A persistent workspace directory does not make those in-memory records durable.

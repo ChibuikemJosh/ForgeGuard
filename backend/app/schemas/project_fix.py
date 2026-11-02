@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+from app.schemas.security import SecurityRule
 
 
 class ProposalReviewStatus(str, Enum):
@@ -35,6 +38,7 @@ class ProjectFixProposal(BaseModel):
     rollback_available: bool = False
     reviewer: str | None = None
     created_at: str
+    applied_at: str | None = None
     error: str | None = None
 
 
@@ -56,6 +60,15 @@ class SampleProject(BaseModel):
     path: str
     name: str
     description: str
+
+
+class ProjectRuleSet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str
+    source: Literal["sample", "upload"]
+    rule_origin: Literal["preset", "generated"]
+    rules: list[SecurityRule]
+    default_rule_id: str | None
 
 
 class FileContentResponse(BaseModel):

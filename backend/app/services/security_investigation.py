@@ -17,7 +17,9 @@ from app.schemas.security_investigation import (
 )
 from app.schemas.source_graph import SourceGraph
 from app.services.evidence_validation import EvidenceValidator
+from app.services.investigation_trace import InvestigationCancelled, InvestigationRecorder, TraceCallbackHandler
 from app.services.project_workspace import ProjectReference, WorkspaceService
+from app.services.source_graph_lookup import match_nodes_at_location
 # Ram's agent is imported lazily so this module can be imported without the
 # optional LangChain dependency unless an investigation actually runs.
 
@@ -27,7 +29,7 @@ class SecurityInvestigationService:
         self.workspace = workspace
         self.agent = agent
 
-    def investigate(self, project, index, graph, rule, agent=None, session_id=None):
+    def investigate(self, project, index, graph, rule, agent=None, session_id=None, recorder: InvestigationRecorder | None = None):
         if agent is None:
             if self.agent is None:
                 from app.services.violations_finder_agent import ViolationsFinderAgent
@@ -41,10 +43,20 @@ class SecurityInvestigationService:
             ProjectFolderError,
         )
 
+        if recorder is None:
+            recorder = InvestigationRecorder()
+        planning_id = recorder.start(
+            "planning", f"Planning investigation for {rule.rule_id}"
+        )
+        agent_step: str | None = None
         project_folder = str(self.workspace.project_root(project.project_id))
         context_files = self._plan_context_files(index, graph, rule)
         details = self._rule_text(rule, index, graph, context_files)
+        recorder.finish(planning_id, "ok", f"{len(context_files)} file(s) selected")
+        callbacks = [TraceCallbackHandler(recorder)]
         try:
+            recorder.check_cancelled()
+            agent_step = recorder.start("model", "Muse analysis")
             locations = self._find_locations(
                 agent,
                 details,
@@ -52,8 +64,13 @@ class SecurityInvestigationService:
                 investigation_id,
                 context_files,
                 project_id=project.project_id,
+                callbacks=callbacks,
             )
+            recorder.finish(agent_step, "ok")
+            agent_step = None
             if not locations and self._max_follow_up_rounds() > 0:
+                recorder.check_cancelled()
+                agent_step = recorder.start("model", "Muse follow-up analysis")
                 locations = self._find_locations(
                     agent,
                     details
@@ -64,8 +81,14 @@ class SecurityInvestigationService:
                     context_files,
                     project_id=project.project_id,
                     follow_up=True,
+                    callbacks=callbacks,
                 )
+                recorder.finish(agent_step, "ok")
+                agent_step = None
         except AgentConfigurationError as error:
+            if agent_step:
+                recorder.finish(agent_step, "failed", str(error)[:300])
+            recorder.finish(planning_id, "failed", str(error)[:300])
             return InvestigationResult(
                 investigation_id=investigation_id,
                 project_id=project.project_id,
@@ -74,8 +97,12 @@ class SecurityInvestigationService:
                 errors=[str(error)],
                 summary="Investigation could not run because the AI provider is not configured.",
                 truncated=getattr(agent, "last_truncated", False),
+                steps=recorder.snapshot(),
             )
         except ProjectFolderError as error:
+            if agent_step:
+                recorder.finish(agent_step, "failed", str(error)[:300])
+            recorder.finish(planning_id, "failed", str(error)[:300])
             return InvestigationResult(
                 investigation_id=investigation_id,
                 project_id=project.project_id,
@@ -83,8 +110,12 @@ class SecurityInvestigationService:
                 status=InvestigationStatus.FAILED,
                 errors=[str(error)],
                 truncated=getattr(agent, "last_truncated", False),
+                steps=recorder.snapshot(),
             )
         except AgentResponseError as error:
+            if agent_step:
+                recorder.finish(agent_step, "failed", str(error)[:300])
+            recorder.finish(planning_id, "failed", str(error)[:300])
             return InvestigationResult(
                 investigation_id=investigation_id,
                 project_id=project.project_id,
@@ -93,8 +124,14 @@ class SecurityInvestigationService:
                 errors=[str(error)],
                 summary="The agent response could not be parsed into locations.",
                 truncated=getattr(agent, "last_truncated", False),
+                steps=recorder.snapshot(),
             )
         except Exception as error:
+            if isinstance(error, InvestigationCancelled):
+                return InvestigationResult(investigation_id=investigation_id, project_id=project.project_id, rule_id=rule.rule_id, status=InvestigationStatus.CANCELLED, summary="Investigation was cancelled.", truncated=getattr(agent, "last_truncated", False), steps=recorder.snapshot())
+            if agent_step:
+                recorder.finish(agent_step, "failed", str(error)[:300])
+            recorder.finish(planning_id, "failed", str(error)[:300])
             return InvestigationResult(
                 investigation_id=investigation_id,
                 project_id=project.project_id,
@@ -102,6 +139,7 @@ class SecurityInvestigationService:
                 status=InvestigationStatus.FAILED,
                 errors=[f"Investigation failed: {error}"],
                 truncated=getattr(agent, "last_truncated", False),
+                steps=recorder.snapshot(),
             )
 
         locations = locations or []
@@ -113,7 +151,15 @@ class SecurityInvestigationService:
         affected_symbols = []
         related_nodes = []
         errors = []
+        self._mapping_errors = []
+        self._recorder = recorder
+        validation_id = recorder.start("validation", f"Validating {len(locations)} proposed locations against source")
         for location in locations:
+            try:
+                recorder.check_cancelled()
+            except InvestigationCancelled:
+                recorder.finish(validation_id, "failed", "Investigation was cancelled.")
+                return InvestigationResult(investigation_id=investigation_id, project_id=project.project_id, rule_id=rule.rule_id, status=InvestigationStatus.CANCELLED, summary="Investigation was cancelled.", truncated=truncated, steps=recorder.snapshot())
             try:
                 item = self._validate_location(project, index, graph, validator, location)
             except Exception as error:
@@ -130,6 +176,8 @@ class SecurityInvestigationService:
                         related_nodes.append(node)
 
         valid_items = [item for item in evidence_items if item.status.value == "valid"]
+        recorder.finish(validation_id, "ok", f"{len(valid_items)} valid, {len(evidence_items) - len(valid_items)} rejected")
+        errors.extend(getattr(self, "_mapping_errors", []))
         if not locations:
             status = InvestigationStatus.INCONCLUSIVE
         elif valid_items:
@@ -180,6 +228,7 @@ class SecurityInvestigationService:
             findings=findings,
             errors=errors,
             truncated=truncated,
+            steps=recorder.snapshot(),
             summary=(
                 f"Investigated {len(index.files)} files; agent returned "
                 f"{len(locations)} location(s), {len(valid_items)} validated."
@@ -211,6 +260,7 @@ class SecurityInvestigationService:
         context_files,
         follow_up=False,
         project_id=None,
+        callbacks=None,
     ):
         parameters = inspect.signature(agent.find_violations).parameters
         kwargs = {}
@@ -220,6 +270,8 @@ class SecurityInvestigationService:
             kwargs["follow_up"] = follow_up
         if "project_id" in parameters:
             kwargs["project_id"] = project_id
+        if "callbacks" in parameters:
+            kwargs["callbacks"] = callbacks
         return agent.find_violations(
             details,
             project_folder,
@@ -367,11 +419,18 @@ class SecurityInvestigationService:
     def _validate_location(self, project, index, graph, validator, location):
         from app.schemas.chat import ChatLocation
 
-        if not isinstance(location, ChatLocation):
-            if isinstance(location, dict):
-                line = location.get("linenumber", location.get("line_number", location.get("line number")))
-                location = {"filename": location.get("filename"), "linenumber": line}
+        hints = []
+        if isinstance(location, ChatLocation):
+            hints = list(location.relatednodes or [])
+        elif isinstance(location, dict):
+            hints = location.get("relatednodes", []) or []
+            line = location.get("linenumber", location.get("line_number", location.get("line number")))
+            location = {"filename": location.get("filename"), "linenumber": line, "relatednodes": hints}
             location = ChatLocation.model_validate(location)
+            hints = list(location.relatednodes or [])
+        else:
+            location = ChatLocation.model_validate(location)
+            hints = list(location.relatednodes or [])
         relative_path = location.filename
         project_root = self.workspace.project_root(project.project_id)
         resolved = (project_root / relative_path).resolve()
@@ -411,13 +470,56 @@ class SecurityInvestigationService:
             observed=False,
         )
         item = validator.validate(item)
-        if item.status.value == "valid" and symbol_id is not None:
-            item.related_graph_nodes = (
-                [symbol_id] if symbol_id in validator.graph_node_ids else []
-            )
+        if item.status.value == "valid":
+            recorder = getattr(self, "_recorder", None)
+            map_id = recorder.start("mapping", f"Mapping {relative_path}:{location.linenumber} to graph nodes") if recorder else None
+            try:
+                backend_matches = match_nodes_at_location(graph, relative_path, location.linenumber)
+            except Exception as error:
+                item.node_matches = []
+                item.related_graph_nodes = [symbol_id] if symbol_id and symbol_id in validator.graph_node_ids else []
+                msg = f"Graph node mapping failed for {relative_path}:{location.linenumber}: {error}"
+                if hasattr(self, "_mapping_errors"):
+                    self._mapping_errors.append(msg)
+                if recorder and map_id:
+                    recorder.finish(map_id, "failed", str(error)[:300])
+                return item
+            kept = []
+            backend_ids = {m.node_id for m in backend_matches}
+            for hint in hints:
+                hid = hint.node_id if not isinstance(hint, dict) else hint.get("node_id")
+                hfile = hint.file_path if not isinstance(hint, dict) else hint.get("file_path")
+                if hid in validator.graph_node_ids and hfile == relative_path and hid not in backend_ids:
+                    # Normalize hint to a match object
+                    try:
+                        from app.schemas.source_graph import SourceGraphNodeMatch as _M
+                        kept.append(hint if not isinstance(hint, dict) else _M.model_validate(hint))
+                    except Exception:
+                        continue
+            combined = list(backend_matches) + kept
+            rank = {"route": 0, "method": 0, "function": 0, "class": 1, "module": 2}
+            combined.sort(key=lambda m: (rank.get(m.node_type, 4), (m.end_line - m.start_line) if m.start_line is not None and m.end_line is not None else 10**9))
+            seen, deduped = set(), []
+            for m in combined:
+                if m.node_id not in seen:
+                    seen.add(m.node_id); deduped.append(m)
+            item.node_matches = deduped
+            related = []
+            if symbol_id and symbol_id in validator.graph_node_ids:
+                related.append(symbol_id)
+            for m in deduped:
+                if m.node_id not in related:
+                    related.append(m.node_id)
+            item.related_graph_nodes = related
             item = validator.validate(item)
+            # validator may reset? preserve matches
+            item.node_matches = deduped
+            item.related_graph_nodes = related
+            if recorder and map_id:
+                recorder.finish(map_id, "ok", f"{len(deduped)} node(s) matched")
         else:
             item.related_graph_nodes = []
+            item.node_matches = []
         return item
 
     @staticmethod

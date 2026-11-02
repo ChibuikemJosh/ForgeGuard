@@ -57,6 +57,13 @@ class SourceGraphNodeLookup:
         actual_paths = {path for path in index.files}
         if normalized_path not in actual_paths:
             raise SourceGraphLookupError("Source file does not exist in the project.")
+        try:
+            content = self.workspace.read_file(project_id, normalized_path)
+        except WorkspaceError as error:
+            raise SourceGraphLookupError(str(error)) from error
+        line_count = len(content.splitlines())
+        if line_number > line_count:
+            raise SourceGraphLookupError("line_number is outside the source file.")
 
         graph = self.builder.build(
             project,

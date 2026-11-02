@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.schemas.chat import ChatLocation, ChatRequest
 from app.services.chat import find_violation_locations
+from app.services.project_workspace import WorkspaceError
 from app.services.violations_finder_agent import (
     AgentConfigurationError,
     AgentResponseError,
@@ -21,9 +22,12 @@ def chat(request: ChatRequest) -> list[ChatLocation]:
             request.custom_security_violation_details,
             request.project_folder,
             request.session_id,
+            request.project_id,
         )
     except ProjectFolderError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except WorkspaceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     except AgentConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except AgentResponseError as error:

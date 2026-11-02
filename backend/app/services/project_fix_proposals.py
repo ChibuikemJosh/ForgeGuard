@@ -162,6 +162,31 @@ class ProjectFixProposalService:
     def record_investigation(self, result: InvestigationResult) -> None:
         self.investigations[result.project_id] = result
 
+    def recent_project_paths(self, root: Path, cutoff: float) -> set[Path]:
+        """Return project directories with recently active fix proposals."""
+        paths: set[Path] = set()
+        for proposal in self.proposals.values():
+            timestamps = [proposal.created_at, proposal.applied_at]
+            recent = False
+            for value in timestamps:
+                if not value:
+                    continue
+                try:
+                    timestamp = datetime.fromisoformat(value).timestamp()
+                except ValueError:
+                    continue
+                if timestamp >= cutoff:
+                    recent = True
+                    break
+            if not recent:
+                continue
+            try:
+                reference = self.workspace.get_project(proposal.project_id)
+            except Exception:
+                continue
+            paths.add((root / reference.relative_path).resolve())
+        return paths
+
     def create_proposal(self, project_id: str, finding_id: str, instructions: str | None = None) -> ProjectFixProposal:
         try:
             self.workspace.get_project(project_id)

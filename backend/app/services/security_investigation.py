@@ -350,7 +350,15 @@ class SecurityInvestigationService:
 
     def _rule_text(self, rule, index=None, graph=None, context_files=None):
         title = rule.title or getattr(rule, "name", None) or rule.rule_id
-        parts = [title]
+        parts = [
+            title,
+            (
+                "Only claim a rule is supported when the supplied source provides "
+                "evidence. If verification requires runtime state, external data, "
+                "or values not present in the project, report the limitation "
+                "instead of treating the rule as proven."
+            ),
+        ]
         if rule.invariant:
             parts.append(rule.invariant)
         if rule.description:

@@ -28,7 +28,7 @@ export function Hero() {
               transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
               aria-hidden
             />
-            AI SECURITY INVESTIGATION — NO-AUTH HACKATHON DEMO
+            AI SECURITY INVESTIGATION
           </motion.p>
 
           <h1 className="mt-5 font-display text-[36px] font-light leading-[1.08] tracking-[-0.035em] text-zinc-50 min-[420px]:text-[44px] sm:text-[56px] lg:text-[64px]">

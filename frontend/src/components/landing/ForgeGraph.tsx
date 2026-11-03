@@ -49,9 +49,9 @@ export function ForgeGraph() {
   const flowLabel = useMemo(() => "Interactive Forge project graph. Drag to pan, click a node to inspect it.", []);
 
   return (
-    <div className="relative overflow-hidden rounded-lg border border-line bg-panel">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
-        <span className="flex items-center gap-2 font-mono text-[11px] tracking-wide text-zinc-400">
+    <div className="relative w-full min-w-0 overflow-hidden rounded-lg border border-line bg-panel">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2.5 sm:px-4">
+        <span className="flex min-w-0 items-center gap-2 font-mono text-[10px] tracking-wide text-zinc-400 sm:text-[11px]">
           <motion.span
             className="size-1.5 rounded-full bg-ember"
             animate={{ opacity: [1, 0.2, 1] }}
@@ -63,7 +63,7 @@ export function ForgeGraph() {
         <BackendPill />
       </div>
 
-      <div className="relative h-[340px] sm:h-[400px]" aria-label={flowLabel}>
+      <div className="relative h-[300px] min-[420px]:h-[340px] sm:h-[400px]" aria-label={flowLabel}>
         {/* HUD corner ticks + scan sweep, echoing the reference's live-scene frame */}
         <span className="pointer-events-none absolute left-2 top-2 z-10 size-3 border-l border-t border-ember" aria-hidden />
         <span className="pointer-events-none absolute right-2 top-2 z-10 size-3 border-r border-t border-ember" aria-hidden />
@@ -95,7 +95,7 @@ export function ForgeGraph() {
         </ReactFlow>
       </div>
 
-      <div className="flex min-h-[46px] flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-line px-4 py-3" aria-live="polite">
+      <div className="flex min-h-[46px] flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-line px-3 py-3 sm:px-4" aria-live="polite">
         <AnimatePresence mode="wait" initial={false}>
           <motion.span
             key={selectedId}
@@ -105,8 +105,8 @@ export function ForgeGraph() {
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.22 }}
           >
-            <span className="font-mono text-[11px] text-ember-bright">{selected.file}</span>
-            <span className="text-[15px] text-zinc-200">{selected.detail}</span>
+            <span className="break-all font-mono text-[10px] text-ember-bright sm:text-[11px]">{selected.file}</span>
+            <span className="text-[14px] leading-snug text-zinc-200 sm:text-[15px]">{selected.detail}</span>
           </motion.span>
         </AnimatePresence>
         <span className="ml-auto hidden font-mono text-[10px] text-zinc-500 lg:block">drag nodes · click to inspect</span>

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster } from "sonner";
-import { StatusBar } from "../components/workspace/StatusBar";
 import { ResizeHandle } from "../components/workspace/ResizeHandle";
 import { TitleBar } from "../components/workspace/TitleBar";
 import { WorkflowStepper, type WorkflowStep } from "../components/workspace/WorkflowStepper";
 import { useProjectWorkflow } from "../hooks/useProjectWorkflow";
+import { NonPythonDialog } from "../components/workspace/project/NonPythonDialog";
 import { ProjectPicker } from "../components/workspace/project/ProjectPicker";
 import { ProjectExplorer } from "../components/workspace/project/ProjectExplorer";
 import { SourceGraphCanvas } from "../components/workspace/project/SourceGraphCanvas";
@@ -31,7 +31,7 @@ export default function Workspace() {
   const [rightOpen, setRightOpen] = useState(true);
   const [leftWidth, setLeftWidth] = useState(LEFT.def);
   const [rightWidth, setRightWidth] = useState(RIGHT.def);
-  const [centerTab, setCenterTab] = useState<CenterTab>("split");
+  const [centerTab, setCenterTab] = useState<CenterTab>("graph");
   const [splitPct, setSplitPct] = useState(52);
   const [tab, setTab] = useState<WorkspaceTab>("investigate");
   const [focusFile, setFocusFile] = useState<string | null>(null);
@@ -60,6 +60,12 @@ export default function Workspace() {
 
   const drillToFile = useCallback((path: string) => { setFocusFile(path); setFocusTick((t) => t + 1); }, []);
 
+  const handleRerun = useCallback(() => {
+    setTab("investigate");
+    setRightOpen(true);
+    void pactions.rerun();
+  }, [pactions]);
+
   const { current, maxReached } = useMemo(() => {
     if (!pstate.project) return { current: 0, maxReached: 0 };
     if (!pstate.graph) return { current: 1, maxReached: 1 };
@@ -83,7 +89,10 @@ export default function Workspace() {
     <div className="flex h-screen flex-col gap-1.5 bg-ide-bg p-1.5 font-ui text-zinc-100">
       <a href="#workspace-graph" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-ember focus:px-3 focus:py-2 focus:text-white">Skip to graph</a>
       <Toaster theme="dark" toastOptions={{ style: { background: "#1a1a1d", border: "1px solid #262629", color: "#f4f4f5" } }} position="bottom-right" />
-      <TitleBar leftOpen={leftOpen} rightOpen={rightOpen} onToggleLeft={() => setLeftOpen((v) => !v)} onToggleRight={() => setRightOpen((v) => !v)} onHome={() => navigate("/")} projectName={pstate.project?.name ?? null} onChangeProject={pactions.changeProject} />
+      <NonPythonDialog open={pstate.nonPythonNotice !== null} message={pstate.nonPythonNotice ?? ""} sampleLabel={pstate.samples[0]?.name ?? null}
+        onUseSample={pstate.samples[0] ? () => { const s = pstate.samples[0]; pactions.dismissNonPythonNotice(); if (s) void pactions.useSample(s); } : null}
+        onChooseAnother={() => { pactions.dismissNonPythonNotice(); pactions.changeProject(); }} onClose={pactions.dismissNonPythonNotice} />
+      <TitleBar leftOpen={leftOpen} rightOpen={rightOpen} onToggleLeft={() => setLeftOpen((v) => !v)} onToggleRight={() => setRightOpen((v) => !v)} onHome={() => navigate("/")} projectName={pstate.project?.name ?? null} onChangeProject={pactions.changeProject} backendOk={pstate.backendOk} />
       <div className="flex min-h-0 flex-1 gap-1.5">
         {leftOpen && pstate.project ? (<>
           <div className="shrink-0" style={{ width: leftWidth }}>
@@ -104,7 +113,7 @@ export default function Workspace() {
             {pstate.verifiedSummary ? <p className="rounded-lg border border-line bg-panel px-3 py-1.5 text-[11px] text-zinc-300" aria-live="polite">Verify: {pstate.verifiedSummary}</p> : null}
             {tab === "changes" ? (
               <ChangesView finding={pstate.selectedFinding} proposal={pstate.proposal} appliedFixes={pstate.appliedFixes} busy={pstate.busy} phase={pstate.phase} hasProject={!!pstate.project}
-                onGoInvestigate={() => setTab("investigate")} onGenerate={pactions.generateFix} onReview={pactions.review} onApply={pactions.apply} onRollback={pactions.rollback} onRerun={pactions.rerun}
+                onGoInvestigate={() => setTab("investigate")} onGenerate={pactions.generateFix} onReview={pactions.review} onApply={pactions.apply} onRollback={pactions.rollback} onRerun={handleRerun}
                 onDownloadPatch={pactions.downloadPatch} onDownloadZip={pactions.downloadZip} />
             ) : (<>
             <div className="flex items-center gap-1" role="tablist" aria-label="Center view">
@@ -135,12 +144,31 @@ export default function Workspace() {
               <RulePanel rules={pstate.rules} rule={pstate.rule} ruleOrigin={pstate.ruleOrigin} rulesLoading={pstate.rulesLoading} onSelect={pactions.setRule} busy={pstate.busy} canInvestigate={!!pstate.project && !!pstate.graph && !!pstate.rule} onInvestigate={pactions.investigate} onCancel={pactions.cancel} investigating={pstate.phase === "investigating"} pythonCount={pstate.manifest?.python_file_count ?? null} />
               <AgentActivity steps={pstate.investigation?.steps ?? []} running={pstate.phase === "investigating"} />
               <FindingsPanel result={pstate.investigation} selected={pstate.selectedFinding} onRunAgain={pactions.investigate} onSelect={(f) => { pactions.selectFinding(f); if (f.affected_files[0]) drillToFile(f.affected_files[0]); setCenterTab("split"); setRightOpen(true); }} />
-              {pstate.selectedFinding ? <button type="button" onClick={() => setTab("changes")} className="w-full rounded bg-ember px-3 py-2 text-[12px] font-semibold text-white focus-visible:outline-2 focus-visible:outline-ide-blue">Propose a fix →</button> : null}
+              <div className="group relative">
+                <button
+                  type="button"
+                  disabled={!pstate.selectedFinding}
+                  onClick={() => setTab("changes")}
+                  aria-describedby="propose-fix-tip"
+                  title={pstate.selectedFinding ? "Review the selected finding and propose an AI-assisted fix" : "Select a vulnerability finding first, then propose a fix"}
+                  className="w-full rounded bg-ember px-3 py-2 text-[12px] font-semibold text-white focus-visible:outline-2 focus-visible:outline-ide-blue disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-ember"
+                >
+                  Propose a fix →
+                </button>
+                <span
+                  id="propose-fix-tip"
+                  role="tooltip"
+                  className="pointer-events-none absolute inset-x-0 bottom-full z-10 mb-2 rounded-md border border-line bg-panel-2 px-2.5 py-2 text-[11px] leading-relaxed text-zinc-300 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                >
+                  {pstate.selectedFinding
+                    ? "Review the selected vulnerability, then propose an AI-assisted fix on the Changes tab."
+                    : "Select a vulnerability finding first — pick one from the list above, then propose a fix."}
+                </span>
+              </div>
             </div>
           </div>
         </>) : null}
       </div>
-      <StatusBar backendOk={pstate.backendOk} projectName={pstate.project?.name ?? null} fileName={pstate.selectedFile} investigationStatus={pstate.investigation?.status ?? null} phase={pstate.phase} reviewStatus={pstate.proposal?.review_status ?? null} applicationStatus={pstate.proposal?.application_status ?? null} />
     </div>
   );
 }

@@ -14,24 +14,24 @@ export function FaqCarousel() {
   const item = FAQ_ITEMS[index];
   return (
     <section id="faq" className="scroll-mt-16 border-t border-line bg-panel/40" aria-label="Questions and answers">
-      <div className="mx-auto max-w-6xl px-5 py-16">
+      <div className="mx-auto w-full max-w-6xl px-4 py-14 sm:px-5 sm:py-16">
         <Reveal>
-          <h2 className="font-display text-[32px] font-light tracking-[-0.03em]">Questions, answered</h2>
-          <p className="mt-2 max-w-xl text-[17px] text-zinc-300">What Forge Guard does, what it never does, and what to expect from the hosted demo.</p>
+          <h2 className="font-display text-[28px] font-light leading-tight tracking-[-0.03em] sm:text-[32px]">Questions, answered</h2>
+          <p className="mt-2 max-w-xl text-[16px] leading-relaxed text-zinc-300 sm:text-[17px]">What Forge Guard does, what it never does, and what to expect from the hosted demo.</p>
         </Reveal>
-        <div className="mt-8 rounded-md border border-line bg-panel p-5 sm:p-7">
+        <div className="mt-8 rounded-md border border-line bg-panel p-4 sm:p-7">
           <div className="flex items-center justify-between gap-3">
-            <p className="font-mono text-[11px] text-ember-bright" aria-live="polite">QUESTION {index + 1} / {FAQ_ITEMS.length}</p>
+            <p className="font-mono text-[10px] text-ember-bright sm:text-[11px]" aria-live="polite">QUESTION {index + 1} / {FAQ_ITEMS.length}</p>
             <div className="flex gap-2">
               <button type="button" onClick={() => go(index - 1, -1)} aria-label="Previous question" className="rounded-sm border border-line px-3 py-2 font-mono text-[13px] text-zinc-200 hover:border-zinc-500 focus-visible:outline-2 focus-visible:outline-ember">←</button>
               <button type="button" onClick={() => go(index + 1, 1)} aria-label="Next question" className="rounded-sm border border-line px-3 py-2 font-mono text-[13px] text-zinc-200 hover:border-zinc-500 focus-visible:outline-2 focus-visible:outline-ember">→</button>
             </div>
           </div>
-          <div className="relative mt-4 min-h-44 overflow-hidden sm:min-h-36">
+          <div className="relative mt-4 min-h-48 overflow-hidden min-[420px]:min-h-44 sm:min-h-36">
             <AnimatePresence mode="wait" initial={false} custom={dir}>
               <motion.div key={index} initial={{ opacity: 0, x: 32 * dir }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -32 * dir }} transition={{ duration: 0.3, ease: EASE_OUT }}>
-                <h3 className="text-[22px] font-bold leading-snug">{item.q}</h3>
-                <p className="mt-3 max-w-3xl text-[16px] leading-relaxed text-zinc-300">{item.a}</p>
+                <h3 className="text-[20px] font-bold leading-snug sm:text-[22px]">{item.q}</h3>
+                <p className="mt-3 max-w-3xl text-[15px] leading-relaxed text-zinc-300 sm:text-[16px]">{item.a}</p>
               </motion.div>
             </AnimatePresence>
           </div>

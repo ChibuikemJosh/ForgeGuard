@@ -17,11 +17,11 @@ export function BootScreen() {
       role="status"
       aria-label="Forge workspace is loading"
     >
-      <div className="w-[min(420px,84vw)]">
-        <div className="flex items-center gap-3">
-          <span className="grid size-9 place-items-center rounded-sm bg-ember font-mono text-[15px] font-bold text-white">F</span>
+      <div className="w-[min(420px,88vw)] px-1">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="grid size-9 shrink-0 place-items-center rounded-sm bg-ember font-mono text-[15px] font-bold text-white">F</span>
           <span className="font-display text-[22px] font-light tracking-tight">Forge</span>
-          <span className="ml-auto font-mono text-[10px] tracking-[0.18em] text-ember-bright">INITIALIZING WORKSPACE</span>
+          <span className="ml-auto whitespace-nowrap font-mono text-[9px] tracking-[0.14em] text-ember-bright min-[420px]:text-[10px] min-[420px]:tracking-[0.18em]">INITIALIZING WORKSPACE</span>
         </div>
 
         <div className="mt-7 h-px w-full overflow-hidden bg-line">
@@ -33,7 +33,7 @@ export function BootScreen() {
           />
         </div>
 
-        <ul className="mt-5 space-y-1.5 font-mono text-[11px] text-zinc-500">
+        <ul className="mt-5 space-y-1.5 break-all font-mono text-[10px] leading-relaxed text-zinc-500 min-[420px]:text-[11px]">
           {BOOT_LINES.map((line, index) => (
             <motion.li
               key={line}

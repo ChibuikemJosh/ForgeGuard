@@ -28,7 +28,7 @@ export default function Home() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen bg-coal font-sans text-zinc-100">
+      <div className="min-h-screen overflow-x-clip bg-coal font-sans text-zinc-100">
         <AnimatePresence>{booting ? <BootScreen key="boot" /> : null}</AnimatePresence>
 
         <a

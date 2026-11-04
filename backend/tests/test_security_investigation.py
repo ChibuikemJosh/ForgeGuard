@@ -38,6 +38,16 @@ class FakeAgent:
         return self.locations
 
 
+class PartialAgent(FakeAgent):
+    last_incomplete = True
+    last_truncated = False
+    last_chunk_stats = [
+        {"chunk_id": "ok", "status": "succeeded"},
+        {"chunk_id": "failed", "status": "failed"},
+    ]
+    last_retried_chunks = 1
+
+
 class ContextAgent:
     def __init__(self, locations):
         self.locations = locations
@@ -92,6 +102,22 @@ def test_investigation_with_valid_agent_location(tmp_path):
     assert finding.evidence[0].status.value == "valid"
     assert finding.evidence[0].file_path == "m.py"
     assert finding.affected_files == ["m.py"]
+
+
+def test_partial_chunk_results_are_not_reported_as_complete(tmp_path):
+    service, ref = _workspace(tmp_path, {"m.py": "def foo():\n    return 1\n"})
+    index, graph = _index_graph(service, ref)
+    rule = SecurityRule(rule_id="r", title="R", invariant="I")
+    result = SecurityInvestigationService(
+        service,
+        agent=PartialAgent([ChatLocation(filename="m.py", linenumber=1)]),
+    ).investigate(ref, index, graph, rule)
+
+    assert result.status.value == "partially_completed"
+    assert result.complete is False
+    assert result.total_chunks == 2
+    assert result.failed_chunks == 1
+    assert any("partially completed" in error for error in result.errors)
 
 
 def test_investigation_with_no_locations_is_inconclusive(tmp_path):

@@ -12,16 +12,25 @@ const PRINCIPLES = [
 export function ModelSection() {
   return (
     <section id="model" className="scroll-mt-16 border-t border-line">
-      <div className="mx-auto max-w-6xl px-5 py-16">
+      <div className="mx-auto w-full max-w-6xl px-4 py-14 sm:px-5 sm:py-16">
         <Reveal>
-          <h2 className="font-display text-[32px] font-light tracking-[-0.03em]">Three edges. Three meanings.</h2>
-          <p className="mt-2 max-w-xl text-[17px] leading-relaxed text-zinc-300">
+          <h2 className="font-display text-[28px] font-light leading-tight tracking-[-0.03em] sm:text-[32px]">Three edges. Three meanings.</h2>
+          <p className="mt-2 max-w-xl text-[16px] leading-relaxed text-zinc-300 sm:text-[17px]">
             Connection kinds are never interchangeable — each is validated on its own rules.
           </p>
         </Reveal>
 
         <Reveal className="mt-8">
-          <div className="overflow-x-auto rounded-md border border-line">
+          <div className="divide-y divide-line rounded-md border border-line sm:hidden">
+            {CONNECTIONS.map((row) => (
+              <div key={row.kind} className="p-4">
+                <p className="font-mono text-[13px] font-semibold text-ember-bright">{row.kind}</p>
+                <p className="mt-1.5 text-[15px] leading-relaxed text-zinc-200">{row.meaning}</p>
+                <p className="mt-1.5 break-all font-mono text-[11px] leading-relaxed text-zinc-400">{row.example}</p>
+              </div>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto rounded-md border border-line sm:block">
           <table className="w-full min-w-140 text-left text-[15px]">
             <thead>
               <tr className="border-b border-line bg-panel font-mono text-[11px] tracking-[0.12em] text-zinc-400">
@@ -57,8 +66,8 @@ export function ModelSection() {
           viewport={VIEWPORT_ONCE}
         >
           {PRINCIPLES.map((principle) => (
-            <motion.p key={principle.title} variants={staggerChild} className="text-[16px] leading-relaxed text-zinc-300">
-              <strong className="block text-[17px] text-white">{principle.title}</strong>
+            <motion.p key={principle.title} variants={staggerChild} className="text-[15px] leading-relaxed text-zinc-300 sm:text-[16px]">
+              <strong className="block text-[16px] text-white sm:text-[17px]">{principle.title}</strong>
               {principle.body}
             </motion.p>
           ))}

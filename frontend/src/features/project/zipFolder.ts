@@ -16,6 +16,15 @@ const MAX_ENTRIES = 0xffff;
 
 export interface ZippedFolder { zip: File; fileCount: number; skippedCount: number }
 
+/** True when the picked folder contains at least one Python source file. */
+export function hasPythonFile(files: File[]): boolean {
+  return files.some((file) => {
+    const path = relativePath(file);
+    const name = path.split("/").pop() ?? path;
+    return name.toLowerCase().endsWith(".py");
+  });
+}
+
 function isSensitive(name: string): boolean {
   return name === ".env" || name.startsWith(".env.") || name.startsWith(".env-");
 }

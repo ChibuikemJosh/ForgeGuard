@@ -13,7 +13,7 @@ interface RevealProps {
 export function Reveal({ children, delay = 0, className }: RevealProps) {
   return (
     <motion.div
-      className={className}
+      className={`min-w-0 ${className ?? ""}`}
       variants={riseIn}
       custom={delay}
       initial="hidden"

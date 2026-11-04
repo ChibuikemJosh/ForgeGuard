@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { toast } from "sonner";
 import * as api from "../services/api/client";
-import { zipFolder } from "../features/project/zipFolder";
+import { hasPythonFile, zipFolder } from "../features/project/zipFolder";
 import type { FileContentResponse, InvestigationFinding, InvestigationResult, ProjectFixProposal, ProjectManifest, ProjectReference, SampleProject, SecurityRule, SourceGraph } from "../features/project/types";
+import { recoverPhase, type ProjectPhase } from "../features/project/workflowPhase";
 
-export type ProjectPhase = "idle" | "project_selected" | "analyzing" | "graph_ready" | "investigating" | "findings_ready" | "proposing_fix" | "proposal_ready" | "approved" | "applying" | "applied" | "error";
+export type { ProjectPhase };
+
+const NON_PYTHON_RE = /no Python files|Unsupported project language/i;
+const NON_PYTHON_MESSAGE = "Forge Guard only analyses Python projects — that folder has no .py files. Try a Python project, or use the bundled Orders API sample to explore the workspace.";
 
 export interface ProjectState {
-  phase: ProjectPhase; busy: boolean; error: string | null; retryPhase: ProjectPhase;
+  phase: ProjectPhase; busy: boolean; error: string | null; retryPhase: ProjectPhase; nonPythonNotice: string | null;
   backendOk: boolean | null; samples: SampleProject[]; project: ProjectReference | null;
   manifest: ProjectManifest | null; graph: SourceGraph | null; rules: SecurityRule[];
   rule: SecurityRule | null; ruleOrigin: "preset" | "generated" | null; rulesLoading: boolean;
@@ -18,7 +22,7 @@ export interface ProjectState {
   /** Backend summary word-for-word from an investigation re-run after apply. */
   verifiedSummary: string | null;
 }
-const initial: ProjectState = { phase: "idle", busy: false, error: null, retryPhase: "idle", backendOk: null, samples: [], project: null, manifest: null, graph: null, rules: [], rule: null, ruleOrigin: null, rulesLoading: false, investigation: null, selectedFinding: null, selectedNodeId: null, selectedFile: null, highlightLine: null, fileContent: null, proposal: null, appliedFixes: [], verifiedSummary: null };
+const initial: ProjectState = { phase: "idle", busy: false, error: null, retryPhase: "idle", nonPythonNotice: null, backendOk: null, samples: [], project: null, manifest: null, graph: null, rules: [], rule: null, ruleOrigin: null, rulesLoading: false, investigation: null, selectedFinding: null, selectedNodeId: null, selectedFile: null, highlightLine: null, fileContent: null, proposal: null, appliedFixes: [], verifiedSummary: null };
 type Action = { type: "patch"; patch: Partial<ProjectState> };
 function reducer(s: ProjectState, a: Action): ProjectState {
   return { ...s, ...a.patch };
@@ -50,7 +54,7 @@ export function useProjectWorkflow() {
     }
     controllers.current.forEach((c) => c.abort());
     controllers.current.clear();
-    patch({ busy: false, phase: stateRef.current.project ? "project_selected" : "idle" });
+    patch({ busy: false, phase: recoverPhase(stateRef.current) });
   }, [patch, stopPolling]);
 
   const call = useCallback(async <T,>(fn: (s: AbortSignal) => Promise<T>): Promise<T> => {
@@ -60,16 +64,29 @@ export function useProjectWorkflow() {
     finally { controllers.current.delete(c); }
   }, []);
 
-  const fail = useCallback((e: unknown, retry: ProjectPhase) => {
+  const fail = useCallback((e: unknown) => {
     if (e instanceof DOMException && e.name === "AbortError") { patch({ busy: false }); return; }
     const msg = e instanceof Error ? e.message : "Request failed";
+    // Recover the phase from retained workflow data so errors never strand an
+    // in-flight review/approval back in "idle".
+    const next = recoverPhase(stateRef.current);
     if (msg.includes("404") && msg.includes("Unknown")) {
       const friendly = "The backend restarted and lost this session's investigation. Run the investigation again (or re-upload the project folder).";
-      const recoverPhase: ProjectPhase = stateRef.current.project && stateRef.current.graph ? "graph_ready" : "idle";
-      patch({ busy: false, error: friendly, phase: recoverPhase, retryPhase: recoverPhase }); toast.error(friendly); return;
+      patch({ busy: false, error: friendly, phase: next, retryPhase: next }); toast.error(friendly); return;
     }
-    patch({ busy: false, error: msg, phase: "error", retryPhase: retry }); toast.error(msg);
+    patch({ busy: false, error: msg, phase: "error", retryPhase: next }); toast.error(msg);
   }, [patch]);
+
+  const failUpload = useCallback((e: unknown) => {
+    if (e instanceof DOMException && e.name === "AbortError") { patch({ busy: false }); return; }
+    const msg = e instanceof Error ? e.message : "Request failed";
+    if (NON_PYTHON_RE.test(msg)) {
+      const next = recoverPhase(stateRef.current);
+      patch({ busy: false, error: null, phase: next, retryPhase: next, nonPythonNotice: NON_PYTHON_MESSAGE });
+      return;
+    }
+    fail(e);
+  }, [fail, patch]);
 
   const refreshApplied = useCallback(async (pid?: string) => {
     const id = pid ?? stateRef.current.project?.project_id; if (!id) return;
@@ -85,8 +102,13 @@ export function useProjectWorkflow() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (e) { fail(e, stateRef.current.phase); }
-  }, [call, fail]);
+    } catch (e) {
+      // Downloads are side effects: surface the error without touching the
+      // workflow phase, so a failed download can't break an approval.
+      const msg = e instanceof Error ? e.message : "Request failed";
+      patch({ error: msg }); toast.error(msg);
+    }
+  }, [call, patch]);
   const downloadPatch = useCallback(() => downloadWith("patch"), [downloadWith]);
   const downloadZip = useCallback(() => downloadWith("zip"), [downloadWith]);
 
@@ -99,7 +121,7 @@ export function useProjectWorkflow() {
     try {
       const samples = await call((s) => api.listSamples(s));
       patch({ samples });
-    } catch (e) { fail(e, "idle"); }
+    } catch (e) { fail(e); }
   }, [call, fail, patch]);
 
   const selectProjectRef = useCallback(async (ref: ProjectReference) => {
@@ -118,8 +140,8 @@ export function useProjectWorkflow() {
         if (!(e instanceof DOMException && e.name === "AbortError")) toast.error(e instanceof Error ? e.message : "Request failed");
       }
       void refreshApplied(ref.project_id);
-    } catch (e) { fail(e, "idle"); }
-  }, [call, fail, patch, refreshApplied]);
+    } catch (e) { failUpload(e); }
+  }, [call, failUpload, patch, refreshApplied]);
 
   const changeProject = useCallback(() => {
     stopPolling();
@@ -135,37 +157,42 @@ export function useProjectWorkflow() {
       const m = await call((s) => api.getManifest(pid, s));
       const g = await call((s) => api.getSourceGraph(pid, s));
       patch({ busy: false, manifest: m, graph: g, phase: "graph_ready" });
-    } catch (e) { fail(e, "project_selected"); }
+    } catch (e) { fail(e); }
   }, [call, fail, patch]);
 
   const useSample = useCallback(async (sample: SampleProject) => {
     patch({ busy: true, error: null });
     try { const ref = await call((s) => api.openProject(sample.path, sample.name, s)); patch({ busy: false }); await selectProjectRef(ref); }
-    catch (e) { fail(e, "idle"); }
+    catch (e) { fail(e); }
   }, [call, fail, patch, selectProjectRef]);
 
   const uploadFolder = useCallback(async (files: File[]) => {
-    patch({ busy: true, error: null });
+    patch({ busy: true, error: null, nonPythonNotice: null });
+    if (!hasPythonFile(files)) {
+      const next = recoverPhase(stateRef.current);
+      patch({ busy: false, phase: next, retryPhase: next, nonPythonNotice: NON_PYTHON_MESSAGE });
+      return;
+    }
     try {
       const { zip, fileCount, skippedCount } = await zipFolder(files);
       const ref = await call((s) => api.uploadProjectZip(zip, s));
       patch({ busy: false }); await selectProjectRef(ref);
       toast.success(`Uploaded ${zip.name.replace(/\.zip$/, "")} (${fileCount} files${skippedCount ? `, ${skippedCount} skipped` : ""})`);
-    } catch (e) { fail(e, "idle"); }
-  }, [call, fail, patch, selectProjectRef]);
+    } catch (e) { failUpload(e); }
+  }, [call, failUpload, patch, selectProjectRef]);
 
   const analyze = useCallback(async () => {
     const pid = stateRef.current.project?.project_id; if (!pid) return;
     patch({ busy: true, error: null, phase: "analyzing" });
     try { const g = await call((s) => api.getSourceGraph(pid, s)); patch({ busy: false, graph: g, phase: "graph_ready" }); }
-    catch (e) { fail(e, "project_selected"); }
+    catch (e) { fail(e); }
   }, [call, fail, patch]);
 
   const openFile = useCallback(async (path: string, line?: number | null) => {
     const pid = stateRef.current.project?.project_id; if (!pid) return;
     patch({ selectedFile: path, highlightLine: line ?? null });
     try { const c = await call((s) => api.getFileContent(pid, path, s)); patch({ fileContent: c }); }
-    catch (e) { fail(e, stateRef.current.phase); }
+    catch (e) { fail(e); }
   }, [call, fail, patch]);
 
   const investigate = useCallback(async () => {
@@ -191,7 +218,7 @@ export function useProjectWorkflow() {
           return;
         }
       }
-    } catch (e) { investigationIdRef.current = null; fail(e, "graph_ready"); }
+    } catch (e) { investigationIdRef.current = null; fail(e); }
   }, [call, fail, patch]);
 
   const selectFinding = useCallback((f: InvestigationFinding | null) => {
@@ -212,28 +239,28 @@ export function useProjectWorkflow() {
     const st = stateRef.current; const pid = st.project?.project_id; const f = st.selectedFinding; if (!pid || !f) return;
     patch({ busy: true, error: null, phase: "proposing_fix" });
     try { const p = await call((s) => api.createFixProposal(pid, f.finding_id, instructions || undefined, s)); patch({ busy: false, proposal: p, phase: "proposal_ready" }); }
-    catch (e) { fail(e, "findings_ready"); }
+    catch (e) { fail(e); }
   }, [call, fail, patch]);
 
   const review = useCallback(async (decision: "approved" | "rejected", reviewer: string) => {
     const p = stateRef.current.proposal; if (!p) return;
     patch({ busy: true, error: null });
     try { const r = await call((s) => api.reviewProjectFixProposal(p.proposal_id, { decision, reviewer, actor: "human" }, s)); patch({ busy: false, proposal: r, phase: decision === "approved" ? "approved" : "proposal_ready" }); }
-    catch (e) { fail(e, "proposal_ready"); }
+    catch (e) { fail(e); }
   }, [call, fail, patch]);
 
   const apply = useCallback(async () => {
     const p = stateRef.current.proposal; if (!p) return;
     patch({ busy: true, error: null, phase: "applying" });
     try { const r = await call((s) => api.applyProjectFixProposal(p.proposal_id, s)); patch({ busy: false, proposal: r, phase: "applied" }); void refreshApplied(); if (stateRef.current.selectedFile) void openFile(stateRef.current.selectedFile, stateRef.current.highlightLine); toast.success("Fix applied"); }
-    catch (e) { fail(e, "approved"); }
+    catch (e) { fail(e); }
   }, [call, fail, openFile, patch, refreshApplied]);
 
   const rollback = useCallback(async () => {
     const p = stateRef.current.proposal; if (!p) return;
     patch({ busy: true, error: null });
     try { const r = await call((s) => api.rollbackProjectFixProposal(p.proposal_id, s)); patch({ busy: false, proposal: r, phase: "approved", verifiedSummary: null }); void refreshApplied(); if (stateRef.current.selectedFile) void openFile(stateRef.current.selectedFile, stateRef.current.highlightLine); toast.success("Rolled back"); }
-    catch (e) { fail(e, "applied"); }
+    catch (e) { fail(e); }
   }, [call, fail, openFile, patch, refreshApplied]);
 
   const rerun = useCallback(async () => { await analyze(); await investigate(); }, [analyze, investigate]);
@@ -242,7 +269,14 @@ export function useProjectWorkflow() {
     checkHealth, loadSamples, useSample, uploadFolder, analyze, investigate, rerun, changeProject, refresh,
     setRule: (r: SecurityRule | null) => patch({ rule: r }),
     selectFinding, selectNode, openFile, generateFix, review, apply, rollback, cancel, downloadPatch, downloadZip, refreshApplied,
-    clearError: () => patch({ error: null, phase: stateRef.current.retryPhase }),
+    dismissNonPythonNotice: () => patch({ nonPythonNotice: null }),
+    // Only roll back to the recovery phase while the workspace is still
+    // showing the error; a later success already moved the flow forward.
+    clearError: () => {
+      const s = stateRef.current;
+      if (s.phase === "error") patch({ error: null, phase: s.retryPhase });
+      else patch({ error: null });
+    },
   }), [analyze, apply, cancel, changeProject, checkHealth, downloadPatch, downloadZip, generateFix, investigate, loadSamples, openFile, patch, refresh, refreshApplied, rerun, review, rollback, selectFinding, selectNode, uploadFolder, useSample]);
 
   return { state, actions };

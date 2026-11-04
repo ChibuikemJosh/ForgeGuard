@@ -14,7 +14,7 @@ export function TreeRow({ node, depth, selectedFile, collapseTick, findingFiles,
   node: TreeNode; depth: number; selectedFile: string | null; collapseTick: number;
   findingFiles: ReadonlyMap<string, number>; forceOpen: boolean; onSelectFile: (path: string) => void;
 }) {
-  const [open, setOpen] = useState(depth < 2);
+  const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState(collapseTick);
   if (seen !== collapseTick) { setSeen(collapseTick); setOpen(false); }
   const isFolder = node.kind === "folder";

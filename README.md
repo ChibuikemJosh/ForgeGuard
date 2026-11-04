@@ -181,6 +181,19 @@ with `ast` — never executed.
 - **Frontend (Vercel / Netlify):** root `frontend/`, `npm run build`, output `dist`;
   set `VITE_API_BASE_URL` at build time.
 
+## Continuous integration
+
+GitHub Actions validates changes targeting `main` with separate backend and
+frontend workflows. Backend changes run Python compilation and the full pytest
+suite. Frontend changes run `npm ci`, Oxlint and the production Vite build.
+The frontend currently has no test script, so the workflow reports that
+coverage gap without silently treating it as a passing test suite.
+
+Render and Vercel remain responsible for deployment. Configure their GitHub
+deployments to require the corresponding successful branch protection status
+check before merging to `main`; no deployment credentials are used by these
+workflows.
+
 ## Docs
 
 - [`docs/architecture.md`](docs/architecture.md)

@@ -30,6 +30,7 @@ class EvidenceStatus(str, Enum):
 
 class InvestigationStatus(str, Enum):
     COMPLETED = "completed"
+    PARTIALLY_COMPLETED = "partially_completed"
     FAILED = "failed"
     INCONCLUSIVE = "inconclusive"
     RUNNING = "running"
@@ -110,6 +111,11 @@ class InvestigationResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
     summary: str = ""
     truncated: bool = False
+    total_chunks: int = 0
+    processed_chunks: int = 0
+    failed_chunks: int = 0
+    retried_chunks: int = 0
+    complete: bool = True
     steps: list[InvestigationStep] = Field(default_factory=list)
 
     @property

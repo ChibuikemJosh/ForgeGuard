@@ -29,6 +29,7 @@ export function FindingsPanel({ result, selected, onSelect, onRunAgain }: Props)
     <section className="rounded-lg border border-line bg-panel p-3" aria-label="Findings">
       <h3 className="font-mono text-[10px] uppercase text-zinc-400">Findings · status: {result.status}</h3>
       {result.status === "completed" ? <p className="mt-2 text-[11px] leading-relaxed text-zinc-300">{result.summary}</p> : null}
+      {result.status === "partially_completed" ? <p className="mt-2 rounded bg-sev-warning/10 px-2 py-1 text-[11px] leading-relaxed text-sev-warning" role="alert">Investigation partially completed. Some source sections could not be analysed. Review the incomplete analysis details before relying on these findings.</p> : null}
       {result.status === "inconclusive" && result.findings.length === 0 ? <p className="mt-2 text-[11px] leading-relaxed text-zinc-300">Muse did not identify any locations for this rule. This is not proof the rule holds; try a more specific rule or check truncation below.</p> : null}
       {result.status === "inconclusive" && result.findings.length > 0 ? <p className="mt-2 text-[11px] leading-relaxed text-zinc-300">Muse proposed locations, but none passed backend evidence validation.</p> : null}
       {result.status === "failed" ? <p className="mt-2 text-[11px] leading-relaxed text-sev-warning" role="alert">{result.errors[0] ?? result.summary}</p> : null}
@@ -38,6 +39,7 @@ export function FindingsPanel({ result, selected, onSelect, onRunAgain }: Props)
         </div>
       ) : null}
       {result.truncated ? <p className="mt-2 rounded bg-sev-warning/10 px-2 py-1 text-[11px] text-sev-warning">Not all Python files were sent to the model. Results may be incomplete.</p> : null}
+      {result.total_chunks > 0 ? <p className="mt-1 font-mono text-[10px] text-zinc-500">Chunks: {result.processed_chunks}/{result.total_chunks} processed · {result.failed_chunks} failed · {result.retried_chunks} retried</p> : null}
       {(result.status === "failed" ? result.errors.slice(1) : result.errors).map((e) => <p key={e} className="mt-1 rounded bg-sev-warning/10 px-2 py-1 font-mono text-[10px] text-sev-warning" role="alert">{e}</p>)}
       <div className="mt-3 flex flex-col gap-2">
         {result.findings.length === 0 ? <p className="text-[11px] text-zinc-500">Backend returned no findings.</p> : result.findings.map((f) => (

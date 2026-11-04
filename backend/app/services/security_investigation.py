@@ -145,6 +145,17 @@ class SecurityInvestigationService:
         locations = locations or []
         locations = self._deduplicate_locations(locations)
         truncated = getattr(agent, "last_truncated", False)
+        chunk_stats = getattr(agent, "last_chunk_stats", [])
+        failed_chunks = sum(
+            1 for chunk in chunk_stats if chunk.get("status") == "failed"
+        )
+        processed_chunks = sum(
+            1
+            for chunk in chunk_stats
+            if chunk.get("status") in {"succeeded", "failed"}
+        )
+        retried_chunks = getattr(agent, "last_retried_chunks", 0)
+        incomplete = bool(getattr(agent, "last_incomplete", False))
         validator = EvidenceValidator(self.workspace, project.project_id, index, graph)
         evidence_items = []
         affected_files = []
@@ -181,7 +192,11 @@ class SecurityInvestigationService:
         if not locations:
             status = InvestigationStatus.INCONCLUSIVE
         elif valid_items:
-            status = InvestigationStatus.COMPLETED
+            status = (
+                InvestigationStatus.PARTIALLY_COMPLETED
+                if incomplete
+                else InvestigationStatus.COMPLETED
+            )
         else:
             status = InvestigationStatus.INCONCLUSIVE
 
@@ -220,6 +235,11 @@ class SecurityInvestigationService:
             errors.append(
                 "Project file listing was truncated; not all Python files were sent to the model."
             )
+        if incomplete:
+            errors.append(
+                "Investigation partially completed. Some source sections could not "
+                "be analysed after retries."
+            )
         return InvestigationResult(
             investigation_id=investigation_id,
             project_id=project.project_id,
@@ -228,6 +248,11 @@ class SecurityInvestigationService:
             findings=findings,
             errors=errors,
             truncated=truncated,
+            total_chunks=len(chunk_stats),
+            processed_chunks=processed_chunks,
+            failed_chunks=failed_chunks,
+            retried_chunks=retried_chunks,
+            complete=not incomplete,
             steps=recorder.snapshot(),
             summary=(
                 f"Investigated {len(index.files)} files; agent returned "

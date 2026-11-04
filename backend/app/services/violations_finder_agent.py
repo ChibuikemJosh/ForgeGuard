@@ -16,6 +16,10 @@ from __future__ import annotations
 
 import json
 import os
+import ast
+import random
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +34,7 @@ from pydantic import SecretStr
 
 from app.schemas.chat import ChatLocation
 from app.services.project_workspace import WorkspaceError, WorkspaceService
+from app.services.investigation_trace import InvestigationCancelled
 from app.services.source_graph_tools import (
     build_related_nodes_tools,
     related_nodes_for_location,
@@ -43,8 +48,11 @@ SYSTEM_INSTRUCTIONS_PATH = Path(__file__).with_name(
 )
 DEFAULT_MODEL = "muse-spark-1.3"
 DEFAULT_BASE_URL = "https://api.meta.ai/v1"
-DEFAULT_MAX_FILES = 100
-DEFAULT_MAX_TOTAL_CHARS = 400_000
+DEFAULT_CHUNK_CHARS = 80_000
+DEFAULT_CHUNK_OVERLAP_LINES = 8
+DEFAULT_MAX_RETRIES = 2
+DEFAULT_REQUEST_TIMEOUT = 90.0
+DEFAULT_RETRY_BACKOFF = 0.25
 SKIPPED_DIR_NAMES = {
     ".git",
     ".hg",
@@ -61,17 +69,142 @@ Example: {"violations": [{"filename": "orders/views.py", "linenumber": 42}]}
 If the violation is not present, respond with: {"violations": []}"""
 
 
-def _investigation_limits() -> tuple[int, int]:
-    """Max Python files and total source chars sent to the model per investigation."""
+def _int_setting(name: str, default: int, minimum: int = 0) -> int:
     try:
-        max_files = int(os.environ.get("FORGE_INVESTIGATION_MAX_FILES", str(DEFAULT_MAX_FILES)))
+        value = int(os.environ.get(name, str(default)))
     except ValueError:
-        max_files = DEFAULT_MAX_FILES
+        value = default
+    return max(minimum, value)
+
+
+def _float_setting(name: str, default: float, minimum: float = 0.0) -> float:
     try:
-        max_chars = int(os.environ.get("FORGE_INVESTIGATION_MAX_CHARS", str(DEFAULT_MAX_TOTAL_CHARS)))
+        value = float(os.environ.get(name, str(default)))
     except ValueError:
-        max_chars = DEFAULT_MAX_TOTAL_CHARS
-    return max(1, max_files), max(1, max_chars)
+        value = default
+    return max(minimum, value)
+
+
+@dataclass(frozen=True)
+class SourceChunk:
+    chunk_id: str
+    file_path: str
+    line_start: int
+    line_end: int
+    content: str
+
+
+def _node_ranges(tree: ast.AST) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for node in getattr(tree, "body", []):
+        start = getattr(node, "lineno", None)
+        end = getattr(node, "end_lineno", None)
+        if isinstance(start, int) and isinstance(end, int):
+            ranges.append((start, end))
+    return ranges
+
+
+def _split_range(
+    lines: list[str],
+    start: int,
+    end: int,
+    max_chars: int,
+    overlap_lines: int,
+) -> list[tuple[int, int]]:
+    if len("".join(lines[start - 1:end])) <= max_chars:
+        return [(start, end)]
+    result: list[tuple[int, int]] = []
+    cursor = start
+    while cursor <= end:
+        current_end = cursor
+        size = 0
+        while current_end <= end and (current_end == cursor or size + len(lines[current_end - 1]) <= max_chars):
+            size += len(lines[current_end - 1])
+            current_end += 1
+        current_end -= 1
+        result.append((cursor, current_end))
+        if current_end >= end:
+            break
+        next_cursor = max(cursor + 1, current_end - overlap_lines + 1)
+        cursor = next_cursor
+    return result
+
+
+def _collect_python_chunks(
+    folder: Path,
+    allowed_paths: set[str] | None = None,
+) -> tuple[list[SourceChunk], list[str]]:
+    """Collect every readable Python file as structure-aware bounded chunks."""
+    max_chars = _int_setting(
+        "FORGE_INVESTIGATION_CHUNK_CHARS", DEFAULT_CHUNK_CHARS, minimum=256
+    )
+    overlap = _int_setting(
+        "FORGE_INVESTIGATION_CHUNK_OVERLAP_LINES",
+        DEFAULT_CHUNK_OVERLAP_LINES,
+        minimum=0,
+    )
+    candidates = sorted(
+        (
+            path
+            for path in folder.rglob("*.py")
+            if path.is_file()
+            and _is_visible(path, folder)
+            and (
+                allowed_paths is None
+                or path.relative_to(folder).as_posix() in allowed_paths
+            )
+        ),
+        key=lambda path: path.relative_to(folder).as_posix().lower(),
+    )
+    chunks: list[SourceChunk] = []
+    failures: list[str] = []
+    for path in candidates:
+        relative = path.relative_to(folder).as_posix()
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            failures.append(f"{relative}: {error}")
+            continue
+        lines = source.splitlines(keepends=True)
+        if not lines:
+            continue
+        try:
+            ranges = _node_ranges(ast.parse(source, filename=relative))
+        except SyntaxError:
+            ranges = []
+        if not ranges:
+            ranges = [(1, len(lines))]
+        else:
+            covered: list[tuple[int, int]] = []
+            cursor = 1
+            for start, end in ranges:
+                if cursor < start:
+                    covered.append((cursor, start - 1))
+                covered.append((start, end))
+                cursor = end + 1
+            if cursor <= len(lines):
+                covered.append((cursor, len(lines)))
+            ranges = covered
+        expanded: list[tuple[int, int]] = []
+        for start, end in ranges:
+            expanded.extend(_split_range(lines, start, end, max_chars, overlap))
+        for index, (start, end) in enumerate(expanded, start=1):
+            header_start = 1 if start == 1 else max(1, min(start - 1, 80))
+            body = "".join(lines[start - 1:end])
+            header = "".join(lines[header_start - 1:start - 1])
+            content = header + body
+            if len(content) > max_chars:
+                content = body
+            chunks.append(
+                SourceChunk(
+                    chunk_id=f"{relative}:{start}-{end}:{index}",
+                    file_path=relative,
+                    line_start=header_start,
+                    line_end=end,
+                    content=content,
+                )
+            )
+    return chunks, failures
 
 
 STRUCTURED_OUTPUT_FORMAT = {
@@ -140,6 +273,7 @@ class AgentResponseError(RuntimeError):
 class AgentState(MessagesState):
     locations: list[dict[str, Any]]
     project_id: str | None
+    chunk: dict[str, Any]
 
 
 def _is_visible(path: Path, root: Path) -> bool:
@@ -147,45 +281,6 @@ def _is_visible(path: Path, root: Path) -> bool:
         part.startswith(".") or part in SKIPPED_DIR_NAMES
         for part in path.relative_to(root).parts[:-1]
     )
-
-
-def _collect_python_files(
-    folder: Path,
-    allowed_paths: set[str] | None = None,
-) -> tuple[list[tuple[str, str]], bool]:
-    """Return [(relative path, content)] for Python files, plus truncated flag."""
-    keywords = ("route", "api", "view", "controller", "endpoint", "service", "auth", "handler", "model")
-    candidates = sorted(
-        (
-            p
-            for p in folder.rglob("*.py")
-            if p.is_file()
-            and _is_visible(p, folder)
-            and (
-                allowed_paths is None
-                or p.relative_to(folder).as_posix() in allowed_paths
-            )
-        ),
-        key=lambda p: (
-            0 if any(k in p.relative_to(folder).as_posix().lower() for k in keywords) else 1,
-            p.relative_to(folder).as_posix().lower(),
-        ),
-    )
-    max_files, max_total_chars = _investigation_limits()
-    collected: list[tuple[str, str]] = []
-    total_chars = 0
-    truncated = len(candidates) > max_files
-    for path in candidates[:max_files]:
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if total_chars + len(content) > max_total_chars:
-            truncated = True
-            break
-        collected.append((path.relative_to(folder).as_posix(), content))
-        total_chars += len(content)
-    return collected, truncated
 
 
 def _parse_locations(raw: str) -> list[ChatLocation]:
@@ -278,6 +373,9 @@ class ViolationsFinderAgent:
         self.last_files_sent: int = 0
         self.last_project_id: str | None = None
         self.last_tool_names: list[str] = []
+        self.last_chunk_stats: list[dict[str, Any]] = []
+        self.last_retried_chunks: int = 0
+        self.last_incomplete: bool = False
 
     @staticmethod
     def _api_key() -> str:
@@ -298,7 +396,11 @@ class ViolationsFinderAgent:
             model=self._model,
             base_url=self._base_url,
             api_key=SecretStr(api_key),
-            timeout=90.0,
+            timeout=_float_setting(
+                "FORGE_INVESTIGATION_REQUEST_TIMEOUT",
+                DEFAULT_REQUEST_TIMEOUT,
+                minimum=1.0,
+            ),
         )
         try:
             invoke_client = client.bind(response_format=STRUCTURED_OUTPUT_FORMAT)
@@ -307,23 +409,18 @@ class ViolationsFinderAgent:
         system_prompt = self._system_prompt()
 
         def analyze(state: AgentState) -> dict[str, Any]:
-            try:
-                response = invoke_client.invoke(
-                    [SystemMessage(content=system_prompt)] + state["messages"]
+            chunk = state["chunk"]
+            user_message = HumanMessage(
+                content=(
+                    f"_extract_text({state['messages'][-1].content})\n\nChunk {chunk['chunk_id']} from {chunk['file_path']} (original lines {chunk['line_start']}-{chunk['line_end']}):\n" + chunk["content"]
                 )
-            except Exception:
-                # Structured output may be unsupported by a compatible endpoint;
-                # retry once unbound and rely on _parse_locations.
-                try:
-                    response = client.invoke(
-                        [SystemMessage(content=system_prompt)] + state["messages"]
-                    )
-                except Exception as error:
-                    raise AgentResponseError(f"Model invocation failed: {error}") from error
-            text = _extract_text(response.content if response else None)
-            if not text:
-                raise AgentResponseError("Model response contained no text content.")
-            locations = _parse_locations(text)
+            )
+            response, locations, retries = self._invoke_with_retries(
+                invoke_client,
+                client,
+                [SystemMessage(content=system_prompt), user_message],
+            )
+            self.last_retried_chunks += 1 if retries else 0
             return {
                 "messages": [response] if response else [],
                 "locations": [location.model_dump() for location in locations],
@@ -362,6 +459,68 @@ class ViolationsFinderAgent:
         graph.add_edge("enrich", END)
         return graph.compile(checkpointer=self._checkpointer)
 
+    @staticmethod
+    def _permanent_error(error: Exception) -> bool:
+        status = getattr(error, "status_code", None)
+        if status is None:
+            response = getattr(error, "response", None)
+            status = getattr(response, "status_code", None)
+        return status in {400, 401, 403, 404, 422}
+
+    def _invoke_with_retries(self, structured_client, client, messages):
+        retries = _int_setting(
+            "FORGE_INVESTIGATION_MAX_RETRIES", DEFAULT_MAX_RETRIES, minimum=0
+        )
+        backoff = _float_setting(
+            "FORGE_INVESTIGATION_RETRY_BACKOFF", DEFAULT_RETRY_BACKOFF
+        )
+        last_error: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                request_messages = messages
+                if attempt:
+                    request_messages = list(messages)
+                    original = request_messages[-1].content
+                    if isinstance(original, str):
+                        marker = "\n\nChunk "
+                        marker_index = original.find(marker)
+                        if marker_index >= 0:
+                            prefix = original[: marker_index + len(marker)]
+                            body = original[marker_index + len(marker):]
+                            budget = max(512, int(len(body) * 0.6**attempt))
+                            body = body[:budget] + (
+                                "\n[Context shortened for retry; use available evidence only.]"
+                            )
+                            request_messages[-1] = HumanMessage(
+                                content=prefix + body
+                            )
+                try:
+                    response = structured_client.invoke(request_messages)
+                except Exception:
+                    response = client.invoke(request_messages)
+                metadata = getattr(response, "response_metadata", {}) or {}
+                finish_reason = metadata.get("finish_reason")
+                if finish_reason in {"length", "max_tokens", "content_filter"}:
+                    raise AgentResponseError(
+                        f"Model response was incomplete ({finish_reason})."
+                    )
+                text = _extract_text(response.content if response else None)
+                if not text:
+                    raise AgentResponseError("Model response contained no text content.")
+                return response, _parse_locations(text), attempt
+            except Exception as error:
+                if isinstance(error, InvestigationCancelled):
+                    raise
+                last_error = error
+                if self._permanent_error(error) or attempt >= retries:
+                    if isinstance(error, AgentResponseError):
+                        raise
+                    raise AgentResponseError(
+                        f"Model invocation failed after {attempt} retry(s)."
+                    ) from error
+                time.sleep(backoff * (2**attempt) + random.uniform(0, backoff))
+        raise AgentResponseError("Model invocation failed.") from last_error
+
     def find_violations(
         self,
         custom_security_violation_details: str,
@@ -387,12 +546,24 @@ class ViolationsFinderAgent:
         workspace, effective_project_id = _resolve_enrichment_context(
             folder, project_id
         )
+        self.last_retried_chunks = 0
         tools = build_related_nodes_tools(workspace, effective_project_id)
         self.last_project_id = effective_project_id
         self.last_tool_names = [tool.name for tool in tools.values()]
-        files, truncated = _collect_python_files(folder, allowed_paths=context_files)
-        self.last_truncated = truncated
-        self.last_files_sent = len(files)
+        chunks, collection_failures = _collect_python_chunks(
+            folder, allowed_paths=context_files
+        )
+        self.last_truncated = bool(collection_failures)
+        self.last_incomplete = bool(collection_failures)
+        self.last_chunk_stats = [
+            {"chunk_id": chunk.chunk_id, "file_path": chunk.file_path, "status": "queued"}
+            for chunk in chunks
+        ]
+        self.last_chunk_stats.extend(
+            {"chunk_id": f"read-error-{index}", "file_path": error, "status": "failed"}
+            for index, error in enumerate(collection_failures, start=1)
+        )
+        self.last_files_sent = len({chunk.file_path for chunk in chunks})
         self._graph = self._build_graph(
             api_key, {effective_project_id: tools}, effective_project_id
         )
@@ -406,26 +577,43 @@ class ViolationsFinderAgent:
                 if follow_up
                 else ""
             ),
-            f"\nPython project at {folder} ({len(files)} files shown"
-            + ("; listing truncated" if truncated else "")
-            + "):",
+            f"\nPython project at {folder} ({self.last_files_sent} files, "
+            f"{len(chunks)} bounded chunks):",
         ]
-        for filename, content in files:
-            parts.append(f"\n--- File: {filename} ---\n{content}")
-        invoke_config: RunnableConfig = {
-            "configurable": {"thread_id": session_id},
-        }
-        if callbacks:
-            invoke_config["callbacks"] = callbacks
-        result = self._graph.invoke(
-            {
-                "messages": [HumanMessage(content="\n".join(parts))],
-                "locations": [],
-                "project_id": effective_project_id,
-            },
-            config=invoke_config,
-        )
-        return [
-            ChatLocation.model_validate(item)
-            for item in (result.get("locations") or [])
-        ]
+        details = "\n".join(parts)
+        locations: list[ChatLocation] = []
+        for index, chunk in enumerate(chunks):
+            if callbacks:
+                for callback in callbacks:
+                    callback.recorder.check_cancelled()
+            invoke_config: RunnableConfig = {
+                "configurable": {"thread_id": f"{session_id}:{chunk.chunk_id}"},
+            }
+            if callbacks:
+                invoke_config["callbacks"] = callbacks
+            try:
+                result = self._graph.invoke(
+                    {
+                        "messages": [HumanMessage(content=details)],
+                        "locations": [],
+                        "project_id": effective_project_id,
+                        "chunk": {
+                            "chunk_id": chunk.chunk_id,
+                            "file_path": chunk.file_path,
+                            "line_start": chunk.line_start,
+                            "line_end": chunk.line_end,
+                            "content": chunk.content,
+                        },
+                    },
+                    config=invoke_config,
+                )
+                locations.extend(
+                    ChatLocation.model_validate(item)
+                    for item in (result.get("locations") or [])
+                )
+                self.last_chunk_stats[index]["status"] = "succeeded"
+            except AgentResponseError as error:
+                self.last_chunk_stats[index]["status"] = "failed"
+                self.last_chunk_stats[index]["error"] = str(error)
+                self.last_incomplete = True
+        return locations

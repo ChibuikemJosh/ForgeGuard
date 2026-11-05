@@ -207,6 +207,45 @@ def _collect_python_chunks(
     return chunks, failures
 
 
+def _collect_python_files(
+    folder: Path,
+    allowed_paths: set[str] | None = None,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Compatibility adapter for callers that still need complete file text."""
+    candidates = sorted(
+        (
+            path
+            for path in folder.rglob("*.py")
+            if path.is_file()
+            and _is_visible(path, folder)
+            and (
+                allowed_paths is None
+                or path.relative_to(folder).as_posix() in allowed_paths
+            )
+        ),
+        key=lambda path: path.relative_to(folder).as_posix().lower(),
+    )
+    files: list[tuple[str, str]] = []
+    failures: list[str] = []
+    for path in candidates:
+        relative = path.relative_to(folder).as_posix()
+        try:
+            files.append((relative, path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError) as error:
+            failures.append(f"{relative}: {error}")
+
+    def sort_key(file_path: str) -> tuple[int, str]:
+        priority = 0 if file_path.split("/", 1)[0].lower() in {
+            "api",
+            "controllers",
+            "routes",
+            "views",
+        } else 1
+        return priority, file_path.lower()
+
+    return sorted(files, key=lambda item: sort_key(item[0])), failures
+
+
 STRUCTURED_OUTPUT_FORMAT = {
     "type": "json_schema",
     "json_schema": {

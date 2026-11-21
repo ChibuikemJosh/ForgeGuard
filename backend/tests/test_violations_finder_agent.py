@@ -13,7 +13,9 @@ from app.services.violations_finder_agent import (
 def test_parse_locations_accepts_bare_array() -> None:
     locations = _parse_locations('[{"filename": "a.py", "linenumber": 3}]')
 
-    assert [(loc.filename, loc.linenumber) for loc in locations] == [("a.py", 3)]
+    assert [(loc.filename, loc.line_start, loc.line_end) for loc in locations] == [
+        ("a.py", 3, 3)
+    ]
 
 
 def test_parse_locations_strips_code_fences() -> None:
@@ -21,13 +23,26 @@ def test_parse_locations_strips_code_fences() -> None:
         '```json\n[{"filename": "a.py", "linenumber": 3}]\n```'
     )
 
-    assert [(loc.filename, loc.linenumber) for loc in locations] == [("a.py", 3)]
+    assert [(loc.filename, loc.line_start, loc.line_end) for loc in locations] == [
+        ("a.py", 3, 3)
+    ]
 
 
 def test_parse_locations_accepts_line_number_variant() -> None:
     locations = _parse_locations('[{"filename": "a.py", "line_number": "7"}]')
 
-    assert [(loc.filename, loc.linenumber) for loc in locations] == [("a.py", 7)]
+    assert [(loc.filename, loc.line_start, loc.line_end) for loc in locations] == [
+        ("a.py", 7, 7)
+    ]
+
+
+def test_legacy_single_line_matches_canonical_range() -> None:
+    legacy = _parse_locations('[{"filename": "a.py", "linenumber": 3}]')[0]
+    canonical = _parse_locations(
+        '[{"filename": "a.py", "line_start": 3, "line_end": 3}]'
+    )[0]
+
+    assert legacy == canonical
 
 
 def test_parse_locations_accepts_empty_array() -> None:
@@ -55,7 +70,23 @@ def test_extract_text_from_string_and_blocks():
 
 def test_parse_locations_accepts_structured_wrapper():
     locations = _parse_locations('{"violations": [{"filename": "x.py", "linenumber": 2}]}')
-    assert [(loc.filename, loc.linenumber) for loc in locations] == [("x.py", 2)]
+    assert [(loc.filename, loc.line_start, loc.line_end) for loc in locations] == [
+        ("x.py", 2, 2)
+    ]
+
+
+def test_parse_locations_preserves_range_metadata() -> None:
+    locations = _parse_locations(
+        '{"violations": [{"filename": "x.py", "line_start": 2, '
+        '"line_end": 6, "location_type": "function", '
+        '"symbol_name": "check", "role": "primary"}]}'
+    )
+
+    assert locations[0].line_start == 2
+    assert locations[0].line_end == 6
+    assert locations[0].location_type == "function"
+    assert locations[0].symbol_name == "check"
+    assert locations[0].role == "primary"
 
 
 def test_large_python_file_is_split_without_losing_original_lines(

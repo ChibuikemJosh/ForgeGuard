@@ -64,8 +64,8 @@ SKIPPED_DIR_NAMES = {
 
 RESPONSE_FORMAT = """# Response format
 Respond with ONLY a JSON object, no other text:
-{"violations": [{"filename": "<project-relative path>", "linenumber": <1-based line number>}]}
-Example: {"violations": [{"filename": "orders/views.py", "linenumber": 42}]}
+{"violations": [{"filename": "<project-relative path>", "line_start": <1-based line number>, "line_end": <1-based line number>, "location_type": "line", "symbol_name": null, "role": "supporting"}]}
+Example: {"violations": [{"filename": "orders/views.py", "line_start": 42, "line_end": 42, "location_type": "line", "symbol_name": null, "role": "supporting"}]}
 If the violation is not present, respond with: {"violations": []}"""
 
 
@@ -326,7 +326,8 @@ def _parse_locations(raw: str) -> list[ChatLocation]:
     """Parse model output into validated locations.
 
     Accepts a bare JSON array (optionally fenced), a dict wrapping the
-    array, and ``line_number``/``line number`` key variants.
+    array, and legacy ``linenumber``/``line_number``/``line number`` key
+    variants.
     """
     text = raw.strip()
     if text.startswith("```"):
@@ -350,12 +351,25 @@ def _parse_locations(raw: str) -> list[ChatLocation]:
     for item in data:
         if not isinstance(item, dict):
             raise AgentResponseError(f"Invalid location entry: {item!r}")
-        line = item.get("linenumber", item.get("line_number", item.get("line number")))
         try:
-            locations.append(
-                ChatLocation.model_validate(
-                    {"filename": item.get("filename"), "linenumber": int(line)}  # type: ignore[arg-type]
+            location_data = {
+                key: item[key]
+                for key in (
+                    "filename",
+                    "line_start",
+                    "line_end",
+                    "linenumber",
+                    "line_number",
+                    "line number",
+                    "location_type",
+                    "symbol_name",
+                    "role",
+                    "relatednodes",
                 )
+                if key in item
+            }
+            locations.append(
+                ChatLocation.model_validate(location_data)
             )
         except (ValueError, TypeError) as error:
             raise AgentResponseError(
@@ -471,7 +485,7 @@ class ViolationsFinderAgent:
             enriched: list[dict[str, Any]] = []
             for item in state.get("locations") or []:
                 filename = item.get("filename")
-                linenumber = item.get("linenumber")
+                linenumber = item.get("line_start", item.get("linenumber"))
                 if (
                     isinstance(filename, str)
                     and isinstance(linenumber, int)

@@ -20,7 +20,7 @@ def test_chat_returns_agent_locations(monkeypatch, tmp_path) -> None:
         assert project_folder == str(tmp_path)
         assert session_id == "session-123"
         assert project_id is None
-        return [ChatLocation(filename="app/views.py", linenumber=42)]
+        return [ChatLocation(filename="app/views.py", line_start=42, line_end=42)]
 
     monkeypatch.setattr(chat_service._agent, "find_violations", fake_find)
     response = client.post(
@@ -34,7 +34,15 @@ def test_chat_returns_agent_locations(monkeypatch, tmp_path) -> None:
 
     assert response.status_code == 200
     assert response.json() == [
-        {"filename": "app/views.py", "linenumber": 42, "relatednodes": []}
+        {
+            "filename": "app/views.py",
+            "line_start": 42,
+            "line_end": 42,
+            "location_type": "line",
+            "symbol_name": None,
+            "role": "supporting",
+            "relatednodes": [],
+        }
     ]
 
 
@@ -55,7 +63,8 @@ def test_chat_passes_project_id_and_returns_related_nodes(
         return [
             ChatLocation(
                 filename="app/views.py",
-                linenumber=42,
+                line_start=42,
+                line_end=42,
                 relatednodes=[
                     SourceGraphNodeMatch(
                         node_id="module:project-abc:app/views.py",

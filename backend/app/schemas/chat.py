@@ -1,6 +1,8 @@
 """Request and response contracts for the chat endpoint."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.source_graph import SourceGraphNodeMatch
 
@@ -22,5 +24,40 @@ class ChatLocation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     filename: str
-    linenumber: int
+    line_start: int
+    line_end: int
+    location_type: Literal["line", "code_block", "function", "class"] = "line"
+    symbol_name: str | None = None
+    role: Literal["primary", "supporting", "related"] = "supporting"
     relatednodes: list[SourceGraphNodeMatch] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_line_fields(cls, value: Any) -> Any:
+        """Normalize legacy single-line fields before extra-field validation."""
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        legacy_fields = ("linenumber", "line_number", "line number")
+        legacy_values = [
+            normalized.pop(field)
+            for field in legacy_fields
+            if field in normalized
+        ]
+        if legacy_values:
+            if any(value != legacy_values[0] for value in legacy_values[1:]):
+                raise ValueError("Legacy line number fields must agree.")
+            legacy_line = legacy_values[0]
+            if "line_start" in normalized and normalized["line_start"] != legacy_line:
+                raise ValueError("Legacy line number conflicts with line_start.")
+            if "line_end" in normalized and normalized["line_end"] != legacy_line:
+                raise ValueError("Legacy line number conflicts with line_end.")
+            normalized.setdefault("line_start", legacy_line)
+            normalized.setdefault("line_end", legacy_line)
+        return normalized
+
+    @property
+    def linenumber(self) -> int:
+        """Return the legacy single-line value for existing callers."""
+        return self.line_start
